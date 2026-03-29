@@ -1,0 +1,16 @@
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: tmf-solutions-wildcard
+  namespace: cert-manager
+spec:
+  secretName: tmf-solutions-tls
+  issuerRef:
+    name: letsencrypt-cloudflare
+    kind: ClusterIssuer
+  dnsNames:
+    - "tmf-solutions.com"
+    - "*.tmf-solutions.com"
+  duration: 2160h    # 90 days
+  renewBefore: 360h  # renew 15 days before expiry
