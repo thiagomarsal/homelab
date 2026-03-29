@@ -785,3 +785,63 @@ The key components and their roles:
 - **Service + Endpoints**: Maps external LXC container IPs into Kubernetes service discovery for Traefik routing
 
 This architecture replaces Nginx Proxy Manager entirely: Traefik handles all ingress routing, TLS termination, HTTP→HTTPS redirect, header injection, and proxying to both in-cluster services and external LXC containers — all managed declaratively through Kubernetes manifests with automatic certificate renewal.
+---
+
+## Part 5: NPM to Traefik migration plan
+
+This section documents the phased migration from Nginx Proxy Manager (LXC) to Traefik (k3s built-in) as the single ingress point for all services.
+
+### Stack decisions
+
+| Concern | Decision |
+|---------|----------|
+| Ingress | k3s built-in Traefik — already deployed, no additional installation |
+| TLS | cert-manager + Cloudflare DNS-01 — wildcard `*.tmf-solutions.com` |
+| Storage | Longhorn (1 replica) — independent of pve04 (on-demand node) |
+| n8n database | SQLite in PVC — non-critical data, no extra pod |
+| Cloudflare DDNS | CronJob every 5 min — stateless, no storage |
+| Manifests | Plain `kubectl apply` — all committed to `homelab` repo before cutover |
+
+### Phase 1 — Foundation (zero user impact)
+
+1. Add namespaces to `kubernetes/base/namespaces.yml`: `longhorn-system`, `cert-manager`, `n8n`, `cloudflare-ddns`
+2. Deploy Longhorn → verify default StorageClass, manager pods healthy on all nodes
+3. Deploy cert-manager (v1.16.x) → verify webhook pod is ready
+4. Apply `cloudflare-api-token` Secret manually in `cert-manager` namespace (not committed)
+5. Apply `ClusterIssuer` (letsencrypt-cloudflare, DNS-01) → verify challenge resolves
+6. Apply `Certificate` (`*.tmf-solutions.com`) → wait for `Ready: True`
+
+### Phase 2 — Services (internal access only, pfSense unchanged)
+
+7. Apply Traefik global HTTP→HTTPS redirect middleware
+8. Deploy n8n: PVC + ConfigMap + Deployment + Service + IngressRoute
+9. Apply `n8n-secret` manually (`N8N_ENCRYPTION_KEY`) — not committed
+10. Deploy cloudflare-ddns CronJob
+11. Create Nextcloud IngressRoute + headless Service + Endpoints (192.168.1.21) → commit
+12. Create Immich IngressRoute + headless Service + Endpoints (192.168.1.20) → commit
+13. Validate all routes internally via `/etc/hosts` pointing to Traefik MetalLB IP:
+    - `n8n.tmf-solutions.com` → n8n UI loads, TLS valid
+    - `nextcloud.tmf-solutions.com` → proxies to LXC, TLS valid
+    - `immich.tmf-solutions.com` → proxies to LXC, TLS valid
+
+### Phase 3 — Cutover
+
+14. Update pfSense port forward: NPM LXC IP → Traefik MetalLB IP (ports 80 + 443)
+15. Validate all `*.tmf-solutions.com` domains externally with valid wildcard TLS
+16. Monitor for 24 hours — confirm no regressions
+17. Shut down NPM LXC
+18. Update `docs/architecture.md` if any details changed
+19. Commit final state to `homelab` repo
+
+### Rollback
+
+- **Before step 14**: pfSense unchanged — NPM still serves all external traffic. Debug internally and retry.
+- **After step 14**: Revert pfSense port forward to NPM LXC IP. NPM stays running until step 17.
+- **n8n data loss**: Restore from Proxmox VM snapshot (Longhorn replica lives on node disk).
+
+### Out of scope (future milestones)
+
+- Migrating Nextcloud and Immich workloads into k3s
+- Pi-hole migration (DNS dependency — higher risk, separate planning)
+- GitOps with Flux or ArgoCD
+- Postgres backend for n8n
