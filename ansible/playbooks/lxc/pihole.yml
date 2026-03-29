@@ -1,0 +1,6 @@
+---
+# Placeholder: Pi-hole LXC provisioning
+# TODO: Add tasks to configure Pi-hole LXC container on Proxmox
+- name: Configure Pi-hole LXC
+  hosts: pihole
+  roles: []

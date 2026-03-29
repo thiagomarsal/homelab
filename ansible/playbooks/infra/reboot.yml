@@ -1,0 +1,9 @@
+---
+- name: Reboot all nodes gracefully
+  hosts: all
+  serial: 1
+  tasks:
+    - name: Reboot node
+      reboot:
+        msg: "Reboot triggered by Ansible"
+        reboot_timeout: 300

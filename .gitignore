@@ -1,0 +1,33 @@
+# Secrets
+*.vault
+vault_password
+.vault_password
+*vault_password*
+
+# Generated kubeconfig (contains certs/keys — never commit)
+kubeconfig.yml
+*.kubeconfig
+.kube/
+
+# Ansible retry files
+*.retry
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.python-version
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# env files with secrets
+.env
+!.env.example

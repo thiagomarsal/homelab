@@ -1,0 +1,9 @@
+---
+- name: Update apt packages on all nodes
+  hosts: all
+  tasks:
+    - name: Update apt cache and upgrade packages
+      apt:
+        update_cache: yes
+        upgrade: dist
+        autoremove: yes

@@ -1,0 +1,6 @@
+---
+# Placeholder: Immich LXC provisioning
+# TODO: Add tasks to configure Immich LXC container on Proxmox
+- name: Configure Immich LXC
+  hosts: immich
+  roles: []

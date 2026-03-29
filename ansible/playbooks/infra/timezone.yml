@@ -1,0 +1,9 @@
+---
+- name: Set timezone on all nodes
+  hosts: all
+  vars:
+    timezone: "America/Chicago"
+  tasks:
+    - name: Set system timezone
+      timezone:
+        name: "{{ timezone }}"

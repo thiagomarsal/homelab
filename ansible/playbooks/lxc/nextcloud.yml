@@ -1,0 +1,6 @@
+---
+# Placeholder: Nextcloud LXC provisioning
+# TODO: Add tasks to configure Nextcloud LXC container on Proxmox
+- name: Configure Nextcloud LXC
+  hosts: nextcloud
+  roles: []
