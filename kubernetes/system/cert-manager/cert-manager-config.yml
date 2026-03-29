@@ -1,0 +1,25 @@
+---
+# Patch cert-manager deployment to use Pi-hole (192.168.1.5) for DNS-01
+# propagation checks. Required because pfSense redirects all outbound port 53
+# traffic to Pi-hole — direct queries to 1.1.1.1/8.8.8.8 never reach their
+# destination. Pi-hole is excluded from the NAT rule so it is reachable directly.
+#
+# Apply: kubectl patch -n cert-manager deployment cert-manager --patch-file cert-manager-config.yml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cert-manager
+  namespace: cert-manager
+spec:
+  template:
+    spec:
+      containers:
+        - name: cert-manager-controller
+          args:
+            - --v=2
+            - --cluster-resource-namespace=$(POD_NAMESPACE)
+            - --leader-election-namespace=kube-system
+            - --acme-http01-solver-image=quay.io/jetstack/cert-manager-acmesolver:v1.16.3
+            - --max-concurrent-challenges=60
+            - --dns01-recursive-nameservers-only
+            - --dns01-recursive-nameservers=192.168.1.5:53
