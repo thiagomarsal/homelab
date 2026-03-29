@@ -1,0 +1,16 @@
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: immich
+  namespace: immich
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`immich.tmf-solutions.com`)
+      kind: Rule
+      services:
+        - name: immich
+          port: 80
+  tls: {}

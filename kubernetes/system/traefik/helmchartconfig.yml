@@ -1,0 +1,15 @@
+---
+# Configures k3s-managed Traefik to redirect all HTTP (port 80) to HTTPS (port 443) globally.
+# Applied via HelmChartConfig — k3s reconciles this into the Traefik Helm release automatically.
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: traefik
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    ports:
+      web:
+        redirectTo:
+          port: websecure
+          permanent: true

@@ -3,7 +3,7 @@ apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
   name: tmf-solutions-wildcard
-  namespace: cert-manager
+  namespace: traefik
 spec:
   secretName: tmf-solutions-tls
   issuerRef:

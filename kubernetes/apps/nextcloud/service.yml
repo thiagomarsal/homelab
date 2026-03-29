@@ -1,0 +1,23 @@
+---
+# Headless Service + Endpoints proxying to Nextcloud LXC at 192.168.1.21
+# ExternalName services do not support bare IPs — Endpoints is the correct approach.
+apiVersion: v1
+kind: Service
+metadata:
+  name: nextcloud
+  namespace: nextcloud
+spec:
+  ports:
+    - port: 80
+      targetPort: 80
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: nextcloud
+  namespace: nextcloud
+subsets:
+  - addresses:
+      - ip: 192.168.1.21
+    ports:
+      - port: 80

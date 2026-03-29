@@ -1,0 +1,12 @@
+---
+# Default TLS store for Traefik — serves the wildcard cert for all IngressRoutes
+# that use `tls: {}` without specifying a secretName.
+# The secret tmf-solutions-tls is issued by cert-manager into the traefik namespace.
+apiVersion: traefik.io/v1alpha1
+kind: TLSStore
+metadata:
+  name: default
+  namespace: traefik
+spec:
+  defaultCertificate:
+    secretName: tmf-solutions-tls
