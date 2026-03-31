@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflare-ddns
+  namespace: cloudflare-ddns
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cloudflare-ddns
+  template:
+    metadata:
+      labels:
+        app: cloudflare-ddns
+    spec:
+      containers:
+      - name: ddns
+        image: oznu/cloudflare-ddns:latest
+        imagePullPolicy: Always
+        env:
+        - name: API_KEY 
+          valueFrom:
+            secretKeyRef:
+              name: cloudflare-token
+              key: cloudflare-token
+        - name: ZONE
+          value: "tmf-solutions.com"
+        - name: SUBDOMAIN
+          value: ""
+        - name: PROXIED
+          value: "true" 
+        resources:
+          limits:
+            cpu: 50m
+            memory: 32Mi
+          requests:
+            cpu: 10m
+            memory: 16Mi
+      restartPolicy: Always
