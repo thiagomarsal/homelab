@@ -13,3 +13,8 @@ spec:
         redirectTo:
           port: websecure
           permanent: true
+    metrics:
+      prometheus:
+        entryPoint: metrics
+    additionalArguments:
+      - "--entrypoints.metrics.address=:9100"

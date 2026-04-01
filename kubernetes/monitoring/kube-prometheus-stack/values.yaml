@@ -1,0 +1,119 @@
+# kube-prometheus-stack Helm values
+# Tuned for K3s homelab — no Alertmanager, Longhorn storage, Traefik ingress
+
+# ── Alertmanager ─────────────────────────────────────────────────────────────
+alertmanager:
+  enabled: false
+
+# ── Prometheus ───────────────────────────────────────────────────────────────
+prometheus:
+  prometheusSpec:
+    retention: 15d
+    retentionSize: "7GB"
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: longhorn
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 8Gi
+    # Discover ServiceMonitors across all namespaces
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    # Scrape Longhorn and Traefik via additionalScrapeConfigs
+    additionalScrapeConfigs:
+      # Longhorn metrics
+      - job_name: longhorn
+        static_configs:
+          - targets: ["longhorn-backend.longhorn-system.svc.cluster.local:9500"]
+      # Traefik metrics (port 9100 enabled via HelmChartConfig)
+      - job_name: traefik
+        static_configs:
+          - targets: ["traefik.traefik.svc.cluster.local:9100"]
+      # PVE exporter — scrapes each PVE node via the exporter proxy
+      - job_name: pve
+        metrics_path: /pve
+        params:
+          module: [default]
+        static_configs:
+          # Replace with your actual PVE node IPs
+          - targets:
+              - 192.168.1.10   # pve-node-1
+              - 192.168.1.11   # pve-node-2
+              - 192.168.1.12   # pve-node-3
+              - 192.168.1.13   # pve-node-4
+        relabel_configs:
+          - source_labels: [__address__]
+            target_label: __param_target
+          - source_labels: [__param_target]
+            target_label: instance
+          - target_label: __address__
+            replacement: prometheus-pve-exporter.monitoring.svc.cluster.local:9221
+
+# ── Grafana ───────────────────────────────────────────────────────────────────
+grafana:
+  adminPassword: changeme   # change before deploying
+  deploymentStrategy:
+    type: Recreate
+  persistence:
+    enabled: true
+    storageClassName: longhorn
+    size: 1Gi
+  # Pre-load useful dashboards
+  dashboardProviders:
+    dashboardproviders.yaml:
+      apiVersion: 1
+      providers:
+        - name: default
+          folder: Homelab
+          type: file
+          options:
+            path: /var/lib/grafana/dashboards/default
+  dashboards:
+    default:
+      longhorn:
+        gnetId: 13032    # Longhorn dashboard
+        revision: 6
+        datasource: Prometheus
+      traefik:
+        gnetId: 17346    # Traefik official dashboard
+        revision: 9
+        datasource: Prometheus
+      pve:
+        gnetId: 10347    # Proxmox VE dashboard
+        revision: 5
+        datasource: Prometheus
+      k8s-nodes:
+        gnetId: 1860     # Node Exporter Full
+        revision: 37
+        datasource: Prometheus
+      loki-logs:
+        gnetId: 13639    # Loki logs explorer
+        revision: 2
+        datasource: Loki
+  additionalDataSources:
+    - name: Loki
+      type: loki
+      url: http://loki-gateway.monitoring.svc.cluster.local
+      access: proxy
+      isDefault: false
+
+# ── K3s component adjustments ────────────────────────────────────────────────
+# K3s embeds these — they don't expose standalone metrics endpoints
+kubeScheduler:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeProxy:
+  enabled: false
+kubeEtcd:
+  enabled: false
+
+# ── node-exporter ─────────────────────────────────────────────────────────────
+nodeExporter:
+  enabled: true
+
+# ── kube-state-metrics ────────────────────────────────────────────────────────
+kubeStateMetrics:
+  enabled: true

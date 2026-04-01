@@ -1,0 +1,126 @@
+---
+# Installs Promtail on each Proxmox VE node to ship syslogs to Loki.
+# Ships: syslog, kernel, auth, pve-related journal entries.
+# Requires: Loki IngressRoute deployed and accessible at loki.tmf-solutions.com.
+- name: Install Promtail on PVE nodes
+  hosts: pve
+  become: true
+  vars:
+    promtail_config: "/etc/promtail/config.yml"
+
+  tasks:
+    - name: Install qemu-guest-agent
+      apt:
+        name: qemu-guest-agent
+        state: present
+        update_cache: true
+
+    - name: Enable and start qemu-guest-agent
+      systemd:
+        name: qemu-guest-agent
+        enabled: true
+        state: started
+      ignore_errors: true  # bare-metal PVE nodes have no virtio channel; skip gracefully
+
+    - name: Create promtail directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - /etc/promtail
+        - /var/lib/promtail
+
+    - name: Download Promtail deb package
+      get_url:
+        url: "https://github.com/grafana/loki/releases/download/v{{ promtail_version }}/promtail_{{ promtail_version }}_amd64.deb"
+        dest: /tmp/promtail.deb
+        mode: '0644'
+        force: false
+
+    - name: Install Promtail deb package
+      apt:
+        deb: /tmp/promtail.deb
+        state: present
+
+    - name: Write Promtail config
+      copy:
+        dest: "{{ promtail_config }}"
+        mode: '0644'
+        content: |
+          server:
+            http_listen_port: 9080
+            grpc_listen_port: 0
+
+          positions:
+            filename: /var/lib/promtail/positions.yaml
+
+          clients:
+            - url: {{ loki_push_url }}
+
+          scrape_configs:
+            - job_name: syslog
+              static_configs:
+                - targets: [localhost]
+                  labels:
+                    job: syslog
+                    host: {{ inventory_hostname }}
+                    __path__: /var/log/syslog
+
+            - job_name: kernel
+              static_configs:
+                - targets: [localhost]
+                  labels:
+                    job: kernel
+                    host: {{ inventory_hostname }}
+                    __path__: /var/log/kern.log
+
+            - job_name: auth
+              static_configs:
+                - targets: [localhost]
+                  labels:
+                    job: auth
+                    host: {{ inventory_hostname }}
+                    __path__: /var/log/auth.log
+
+            - job_name: pve
+              static_configs:
+                - targets: [localhost]
+                  labels:
+                    job: pve
+                    host: {{ inventory_hostname }}
+                    __path__: /var/log/pve/*.log
+      notify: restart promtail
+
+    - name: Install Promtail systemd service
+      copy:
+        dest: /etc/systemd/system/promtail.service
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Promtail log shipper
+          After=network.target
+
+          [Service]
+          Type=simple
+          ExecStart=/usr/bin/promtail -config.file={{ promtail_config }}
+          Restart=on-failure
+          RestartSec=5
+
+          [Install]
+          WantedBy=multi-user.target
+      notify: restart promtail
+
+    - name: Enable and start Promtail
+      systemd:
+        name: promtail
+        enabled: true
+        state: started
+        daemon_reload: true
+
+  handlers:
+    - name: restart promtail
+      systemd:
+        name: promtail
+        state: restarted
+        daemon_reload: true

@@ -1,0 +1,104 @@
+# kube-prometheus-stack Helm values — rendered by Ansible
+# Tuned for K3s homelab — no Alertmanager, Longhorn storage, Traefik ingress
+
+alertmanager:
+  enabled: false
+
+prometheus:
+  prometheusSpec:
+    retention: 15d
+    retentionSize: "7GB"
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: longhorn
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 8Gi
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    additionalScrapeConfigs:
+      - job_name: longhorn
+        static_configs:
+          - targets: ["longhorn-backend.longhorn-system.svc.cluster.local:9500"]
+      - job_name: traefik
+        static_configs:
+          - targets: ["traefik.traefik.svc.cluster.local:9100"]
+      - job_name: pve
+        metrics_path: /pve
+        params:
+          module: [default]
+        static_configs:
+          - targets:
+{% for ip in pve_nodes %}
+              - {{ ip }}
+{% endfor %}
+        relabel_configs:
+          - source_labels: [__address__]
+            target_label: __param_target
+          - source_labels: [__param_target]
+            target_label: instance
+          - target_label: __address__
+            replacement: prometheus-pve-exporter.monitoring.svc.cluster.local:9221
+
+grafana:
+  adminPassword: "{{ grafana_admin_password }}"
+  deploymentStrategy:
+    type: Recreate
+  persistence:
+    enabled: true
+    storageClassName: longhorn
+    size: 1Gi
+  dashboardProviders:
+    dashboardproviders.yaml:
+      apiVersion: 1
+      providers:
+        - name: default
+          folder: Homelab
+          type: file
+          options:
+            path: /var/lib/grafana/dashboards/default
+  dashboards:
+    default:
+      longhorn:
+        gnetId: 13032
+        revision: 6
+        datasource: Prometheus
+      traefik:
+        gnetId: 17346
+        revision: 9
+        datasource: Prometheus
+      pve:
+        gnetId: 10347
+        revision: 5
+        datasource: Prometheus
+      k8s-nodes:
+        gnetId: 1860
+        revision: 37
+        datasource: Prometheus
+      loki-logs:
+        gnetId: 13639
+        revision: 2
+        datasource: Loki
+  additionalDataSources:
+    - name: Loki
+      type: loki
+      url: http://loki-gateway.monitoring.svc.cluster.local
+      access: proxy
+      isDefault: false
+
+kubeScheduler:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeProxy:
+  enabled: false
+kubeEtcd:
+  enabled: false
+
+nodeExporter:
+  enabled: true
+
+kubeStateMetrics:
+  enabled: true

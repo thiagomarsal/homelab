@@ -1,0 +1,18 @@
+---
+# Exposes Loki push endpoint externally so PVE node Promtail agents can ship logs.
+# Internal K3s Promtail uses the ClusterIP service directly.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: loki
+  namespace: monitoring
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`loki.tmf-solutions.com`)
+      kind: Rule
+      services:
+        - name: loki-gateway
+          port: 80
+  tls: {}  # uses TLSStore default — wildcard cert from traefik namespace

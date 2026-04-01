@@ -1,0 +1,59 @@
+# Loki Helm values — monolithic (SingleBinary) mode for homelab
+# Chart: grafana/loki v6.55.0
+
+loki:
+  auth_enabled: false
+  commonConfig:
+    replication_factor: 1
+  storage:
+    type: filesystem
+  schemaConfig:
+    configs:
+      - from: "2024-01-01"
+        store: tsdb
+        object_store: filesystem
+        schema: v13
+        index:
+          prefix: loki_index_
+          period: 24h
+  limits_config:
+    retention_period: 7d
+    ingestion_rate_mb: 8
+    ingestion_burst_size_mb: 16
+
+deploymentMode: SingleBinary
+
+singleBinary:
+  replicas: 1
+  persistence:
+    enabled: true
+    storageClass: longhorn
+    size: 10Gi
+
+# Disable scaled-out components — not needed in SingleBinary mode
+read:
+  replicas: 0
+write:
+  replicas: 0
+backend:
+  replicas: 0
+
+# Disable bundled minio — using filesystem storage
+minio:
+  enabled: false
+
+# Disable memcached caches — too memory-intensive for homelab nodes
+chunksCache:
+  enabled: false
+resultsCache:
+  enabled: false
+
+# Disable bundled Grafana — already have kube-prometheus-stack
+grafana:
+  enabled: false
+
+# Disable test pods
+test:
+  enabled: false
+lokiCanary:
+  enabled: false

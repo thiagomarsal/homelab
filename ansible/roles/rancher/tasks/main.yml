@@ -70,9 +70,17 @@
     KUBECONFIG: /etc/rancher/k3s/k3s.yaml
 
 # ============================================================
-# Phase 4: Install Traefik (custom, since we disabled the bundled one)
+# Phase 4: Install Traefik
 # ============================================================
 - name: Add Traefik Helm repo
+  command: helm repo add traefik https://traefik.github.io/charts
+  changed_when: false
+
+- name: Update Helm repos
+  command: helm repo update
+  changed_when: false
+
+- name: Install Traefik
   command: >-
     helm upgrade --install traefik traefik/traefik
     --namespace traefik
@@ -92,7 +100,105 @@
     mode: '0644'
 
 # ============================================================
-# Phase 5: Install Rancher
+# Phase 5: Apply base Kubernetes manifests
+# ============================================================
+- name: Copy kubernetes manifests to master node
+  copy:
+    src: "{{ playbook_dir }}/../../../kubernetes/"
+    dest: /tmp/homelab-k8s/
+    mode: '0644'
+
+- name: Apply namespaces
+  command: k3s kubectl apply -f /tmp/homelab-k8s/base/namespaces.yml
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  changed_when: false
+
+- name: Apply Traefik HelmChartConfig (HTTP→HTTPS redirect + metrics)
+  command: k3s kubectl apply -f /tmp/homelab-k8s/system/traefik/helmchartconfig.yml
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  changed_when: false
+
+# ============================================================
+# Phase 6: Install Longhorn
+# ============================================================
+- name: Add Longhorn Helm repo
+  command: helm repo add longhorn https://charts.longhorn.io
+  changed_when: false
+
+- name: Update Helm repos
+  command: helm repo update
+  changed_when: false
+
+- name: Install Longhorn
+  command: >-
+    helm upgrade --install longhorn longhorn/longhorn
+    --namespace longhorn-system
+    --create-namespace
+    --version {{ longhorn_version }}
+    --wait --timeout 10m
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+
+# ============================================================
+# Phase 7: Configure cert-manager (Cloudflare + ClusterIssuer + wildcard)
+# ============================================================
+- name: Apply cert-manager Cloudflare token secret
+  template:
+    src: cloudflare-token-secret.yml.j2
+    dest: /tmp/cloudflare-token-secret.yml
+    mode: '0600'
+
+- name: Create Cloudflare token secret in cert-manager namespace
+  command: k3s kubectl apply -f /tmp/cloudflare-token-secret.yml
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  changed_when: false
+
+- name: Remove Cloudflare token secret temp file
+  file:
+    path: /tmp/cloudflare-token-secret.yml
+    state: absent
+
+- name: Apply cert-manager ClusterIssuer
+  command: k3s kubectl apply -f /tmp/homelab-k8s/system/cert-manager/clusterissuer.yml
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  changed_when: false
+
+- name: Apply wildcard certificate
+  command: k3s kubectl apply -f /tmp/homelab-k8s/system/cert-manager/wildcard-cert.yml
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  changed_when: false
+
+- name: Patch cert-manager to use Pi-hole for DNS-01 propagation checks
+  command: >-
+    k3s kubectl patch -n cert-manager deployment cert-manager
+    --patch-file /tmp/homelab-k8s/system/cert-manager/cert-manager-config.yml
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  changed_when: false
+
+- name: Wait for wildcard certificate to be ready
+  command: >-
+    k3s kubectl wait certificate tmf-solutions-wildcard
+    --namespace traefik
+    --for=condition=Ready
+    --timeout=300s
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  changed_when: false
+
+- name: Apply Traefik TLSStore (wildcard as default cert)
+  command: k3s kubectl apply -f /tmp/homelab-k8s/system/traefik/tlsstore.yml
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  changed_when: false
+
+# ============================================================
+# Phase 8: Install Rancher (tls.source=secret — TLSStore serves wildcard)
 # ============================================================
 - name: Add Rancher Helm repo (stable)
   command: helm repo add rancher-stable https://releases.rancher.com/server-charts/stable
@@ -115,7 +221,7 @@
     --set hostname={{ rancher_hostname }}
     --set bootstrapPassword=admin
     --set replicas=2
-    --set ingress.tls.source=rancher
+    --set ingress.tls.source=secret
     --version {{ rancher_version }}
     --wait --timeout 10m
   environment:
@@ -128,15 +234,208 @@
     --timeout=300s
   changed_when: false
 
-- name: Display Rancher access info
+# ============================================================
+# Phase 9: Install kube-prometheus-stack (monitoring)
+# ============================================================
+- name: Add prometheus-community Helm repo
+  command: helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+  changed_when: false
+
+- name: Update Helm repos
+  command: helm repo update
+  changed_when: false
+
+- name: Render kube-prometheus-stack values
+  template:
+    src: kube-prometheus-stack-values.yml.j2
+    dest: /tmp/kube-prometheus-stack-values.yml
+    mode: '0600'
+
+- name: Install kube-prometheus-stack
+  command: >-
+    helm upgrade --install kube-prometheus-stack
+    prometheus-community/kube-prometheus-stack
+    --namespace monitoring
+    --version {{ kube_prometheus_stack_version }}
+    --values /tmp/kube-prometheus-stack-values.yml
+    --wait --timeout 10m
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+
+- name: Remove kube-prometheus-stack values temp file
+  file:
+    path: /tmp/kube-prometheus-stack-values.yml
+    state: absent
+
+- name: Apply Grafana IngressRoute
+  command: k3s kubectl apply -f /tmp/homelab-k8s/monitoring/grafana/ingressroute.yml
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  changed_when: false
+
+# ============================================================
+# Phase 10: Deploy PVE exporter
+# ============================================================
+- name: Apply PVE exporter secret
+  template:
+    src: pve-exporter-secret.yml.j2
+    dest: /tmp/pve-exporter-secret.yml
+    mode: '0600'
+
+- name: Create PVE exporter secret
+  command: k3s kubectl apply -f /tmp/pve-exporter-secret.yml
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  changed_when: false
+
+- name: Remove PVE exporter secret temp file
+  file:
+    path: /tmp/pve-exporter-secret.yml
+    state: absent
+
+- name: Apply PVE exporter deployment and service
+  command: k3s kubectl apply -f /tmp/homelab-k8s/monitoring/pve-exporter/deployment.yml
+            -f /tmp/homelab-k8s/monitoring/pve-exporter/service.yml
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  changed_when: false
+
+# ============================================================
+# Phase 11: Deploy applications
+# ============================================================
+- name: Apply cloudflare-ddns secret
+  template:
+    src: cloudflare-token-secret.yml.j2
+    dest: /tmp/cloudflare-ddns-secret.yml
+    mode: '0600'
+
+- name: Create cloudflare-ddns secret
+  command: >-
+    k3s kubectl create secret generic cloudflare-token
+    --namespace cloudflare-ddns
+    --from-literal=cloudflare-token={{ cloudflare_api_token }}
+    --dry-run=client -o yaml | k3s kubectl apply -f -
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  changed_when: false
+
+- name: Apply cloudflare-ddns deployment
+  command: k3s kubectl apply -f /tmp/homelab-k8s/apps/cloudflare-ddns/deployment.yml
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  changed_when: false
+
+- name: Apply n8n secret
+  template:
+    src: n8n-secret.yml.j2
+    dest: /tmp/n8n-secret.yml
+    mode: '0600'
+
+- name: Create n8n secret
+  command: k3s kubectl apply -f /tmp/n8n-secret.yml
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  changed_when: false
+
+- name: Remove n8n secret temp file
+  file:
+    path: /tmp/n8n-secret.yml
+    state: absent
+
+- name: Apply n8n manifests
+  command: >-
+    k3s kubectl apply
+    -f /tmp/homelab-k8s/apps/n8n/configmap.yml
+    -f /tmp/homelab-k8s/apps/n8n/pvc.yml
+    -f /tmp/homelab-k8s/apps/n8n/deployment.yml
+    -f /tmp/homelab-k8s/apps/n8n/service.yml
+    -f /tmp/homelab-k8s/apps/n8n/ingressroute.yml
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  changed_when: false
+
+- name: Apply Immich service and IngressRoute
+  command: >-
+    k3s kubectl apply
+    -f /tmp/homelab-k8s/apps/immich/service.yml
+    -f /tmp/homelab-k8s/apps/immich/ingressroute.yml
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  changed_when: false
+
+- name: Apply Nextcloud service and IngressRoute
+  command: >-
+    k3s kubectl apply
+    -f /tmp/homelab-k8s/apps/nextcloud/service.yml
+    -f /tmp/homelab-k8s/apps/nextcloud/ingressroute.yml
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  changed_when: false
+
+# ============================================================
+# Phase 12: Deploy Loki + Promtail (log aggregation)
+# ============================================================
+- name: Add Grafana Helm repo
+  command: helm repo add grafana https://grafana.github.io/helm-charts
+  changed_when: false
+
+- name: Update Helm repos
+  command: helm repo update
+  changed_when: false
+
+- name: Install Loki (SingleBinary mode)
+  command: >-
+    helm upgrade --install loki grafana/loki
+    --namespace monitoring
+    --version 6.55.0
+    --values /tmp/homelab-k8s/monitoring/loki/values.yaml
+    --wait --timeout 10m
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+
+- name: Apply Loki IngressRoute
+  command: k3s kubectl apply -f /tmp/homelab-k8s/monitoring/loki/ingressroute.yml
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  changed_when: false
+
+- name: Install Promtail DaemonSet (K3s pod log shipper)
+  command: >-
+    helm upgrade --install promtail grafana/promtail
+    --namespace monitoring
+    --version 6.17.1
+    --values /tmp/homelab-k8s/monitoring/promtail/values.yaml
+    --wait --timeout 5m
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+
+- name: Upgrade kube-prometheus-stack to add Loki datasource
+  command: >-
+    helm upgrade kube-prometheus-stack prometheus-community/kube-prometheus-stack
+    --namespace monitoring
+    --version {{ kube_prometheus_stack_version }}
+    --values /tmp/kube-prometheus-stack-values.yml
+    --wait --timeout 10m
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+
+- name: Display deployment summary
   debug:
     msg: |
       ================================================
-      Rancher is deployed!
-      URL: https://{{ rancher_hostname }}
-      Initial password: admin
+      Homelab deployment complete!
       ================================================
-      Point {{ rancher_hostname }} DNS to your
-      MetalLB IP range (192.168.1.61-199) or add
-      it to your /etc/hosts or Pi-hole.
+      Rancher:    https://{{ rancher_hostname }}
+      Grafana:    https://{{ grafana_hostname }}
+      Traefik:    https://{{ traefik_hostname }}
+      n8n:        https://{{ n8n_hostname }}
+      Immich:     https://{{ immich_hostname }}
+      Nextcloud:  https://{{ nextcloud_hostname }}
+      ================================================
+      Initial Rancher password: admin
+      Loki:       https://loki.tmf-solutions.com
+      ================================================
+      Initial Rancher password: admin
+      All services use wildcard TLS: *.tmf-solutions.com
+      Run promtail-pve.yml to ship PVE node logs to Loki.
       ================================================
