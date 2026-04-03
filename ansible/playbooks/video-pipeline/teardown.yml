@@ -1,0 +1,112 @@
+---
+- name: Tear down video pipeline infrastructure
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    kubeconfig: "{{ lookup('env', 'HOME') }}/.kube/config"
+    kube_context: homelab
+
+  tasks:
+    - name: Uninstall MinIO
+      kubernetes.core.helm:
+        kubeconfig: "{{ kubeconfig }}"
+        kube_context: "{{ kube_context }}"
+        name: minio
+        release_namespace: minio
+        state: absent
+        wait: true
+        timeout: "2m0s"
+      ignore_errors: true  # Continue if already absent
+
+    - name: Delete MinIO PVC
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        context: "{{ kube_context }}"
+        api_version: v1
+        kind: PersistentVolumeClaim
+        name: minio-data
+        namespace: minio
+        state: absent
+        wait: true
+        wait_timeout: 60
+
+    - name: Delete MinIO PV
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        context: "{{ kube_context }}"
+        api_version: v1
+        kind: PersistentVolume
+        name: minio-pv
+        state: absent
+
+    - name: Uninstall Redis
+      kubernetes.core.helm:
+        kubeconfig: "{{ kubeconfig }}"
+        kube_context: "{{ kube_context }}"
+        name: redis
+        release_namespace: redis
+        state: absent
+        wait: true
+        timeout: "2m0s"
+      ignore_errors: true
+
+    - name: Delete KafkaNodePool CR
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        context: "{{ kube_context }}"
+        api_version: kafka.strimzi.io/v1beta2
+        kind: KafkaNodePool
+        name: dual-role
+        namespace: kafka
+        state: absent
+        wait: true
+        wait_timeout: 120
+      ignore_errors: true
+
+    - name: Delete Kafka CR
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        context: "{{ kube_context }}"
+        api_version: kafka.strimzi.io/v1beta2
+        kind: Kafka
+        name: kafka-cluster
+        namespace: kafka
+        state: absent
+        wait: true
+        wait_timeout: 120
+      ignore_errors: true
+
+    - name: Uninstall Strimzi operator
+      kubernetes.core.helm:
+        kubeconfig: "{{ kubeconfig }}"
+        kube_context: "{{ kube_context }}"
+        name: strimzi
+        release_namespace: kafka
+        state: absent
+        wait: true
+        timeout: "3m0s"
+      ignore_errors: true
+
+    - name: Delete namespaces
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        context: "{{ kube_context }}"
+        api_version: v1
+        kind: Namespace
+        name: "{{ item }}"
+        state: absent
+        wait: true
+        wait_timeout: 120
+      loop:
+        - minio
+        - redis
+        - kafka
+      ignore_errors: true
+
+    - name: Teardown complete
+      debug:
+        msg:
+          - "=== Video Pipeline Infrastructure Torn Down ==="
+          - "ZFS data at /mnt/storage/minio on k3s-worker-1 was NOT deleted."
+          - "Re-run deploy.yml to restore the infrastructure."
