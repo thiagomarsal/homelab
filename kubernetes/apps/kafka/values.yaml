@@ -1,0 +1,30 @@
+# Strimzi Kafka Operator — Helm values
+# Chart: strimzi/strimzi-kafka-operator
+# Helm install: helm install strimzi strimzi/strimzi-kafka-operator \
+#   -n kafka -f kubernetes/apps/kafka/values.yaml
+
+# Watch only kafka namespace.
+# PROTOTYPE: kafka only. Production: expand if Kafka serves other namespaces.
+watchNamespaces:
+  - kafka
+
+# PROTOTYPE: pin operator to k3s-worker-1. Remove nodeSelector for production.
+nodeSelector:
+  kubernetes.io/hostname: k3s-worker-1
+
+tolerations:
+  - key: on-demand
+    operator: Equal
+    value: "true"
+    effect: NoSchedule
+
+# PROTOTYPE: 1 replica. Production: 2 for HA.
+replicas: 1
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 384Mi
+  limits:
+    cpu: 1000m
+    memory: 512Mi
