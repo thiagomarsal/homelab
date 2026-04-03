@@ -1,0 +1,66 @@
+# MinIO — Helm values
+# Chart: minio/minio
+# Helm install: helm install minio minio/minio \
+#   -n minio -f kubernetes/storage/minio/values.yaml
+
+# PROTOTYPE: standalone. Production: distributed mode (4+ nodes, dedicated storage class).
+mode: standalone
+
+persistence:
+  enabled: true
+  existingClaim: minio-data
+
+# Credentials injected from Kubernetes Secret (created by Ansible deploy.yml)
+existingSecret: minio-secret
+
+# PROTOTYPE: pin to k3s-worker-1. Remove nodeSelector for production.
+nodeSelector:
+  kubernetes.io/hostname: k3s-worker-1
+
+tolerations:
+  - key: on-demand
+    operator: Equal
+    value: "true"
+    effect: NoSchedule
+
+resources:
+  requests:
+    memory: 512Mi
+    cpu: 250m
+  limits:
+    memory: 1Gi
+    cpu: 1000m
+
+# S3 API ingress
+ingress:
+  enabled: true
+  ingressClassName: traefik
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+  hosts:
+    - host: minio.tmf-solutions.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: tmf-solutions-tls
+      hosts:
+        - minio.tmf-solutions.com
+
+# MinIO console ingress
+consoleIngress:
+  enabled: true
+  ingressClassName: traefik
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+  hosts:
+    - host: minio-console.tmf-solutions.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: tmf-solutions-tls
+      hosts:
+        - minio-console.tmf-solutions.com

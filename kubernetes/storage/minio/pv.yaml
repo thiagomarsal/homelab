@@ -1,0 +1,28 @@
+# Local PersistentVolume — ZFS raidz2 on k3s-worker-1 (pve04)
+# Path /mnt/storage/minio must exist on k3s-worker-1 before deploying.
+# Data is NOT deleted on teardown — survives deploy/teardown cycles.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: minio-pv
+spec:
+  capacity:
+    storage: 100Gi
+  volumeMode: Filesystem
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  local:
+    path: /mnt/storage/minio
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values:
+                - k3s-worker-1
+  claimRef:
+    name: minio-data
+    namespace: minio
