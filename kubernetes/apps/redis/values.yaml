@@ -1,0 +1,36 @@
+# Bitnami Redis — Helm values
+# Chart: bitnami/redis
+# Helm install: helm install redis bitnami/redis \
+#   -n redis -f kubernetes/apps/redis/values.yaml
+
+# PROTOTYPE: standalone (no replicas). Production: architecture: replication.
+architecture: standalone
+
+auth:
+  enabled: true
+  existingSecret: redis-secret
+  existingSecretPasswordKey: password
+
+master:
+  # PROTOTYPE: pin to k3s-worker-1. Remove nodeSelector for production.
+  nodeSelector:
+    kubernetes.io/hostname: k3s-worker-1
+
+  tolerations:
+    - key: on-demand
+      operator: Equal
+      value: "true"
+      effect: NoSchedule
+
+  persistence:
+    enabled: true
+    storageClass: longhorn
+    size: 2Gi
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
