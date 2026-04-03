@@ -121,3 +121,16 @@ redis_password: "changeme"
 # MinIO credentials for video pipeline (prototype — change before production)
 minio_root_user: "admin"
 minio_root_password: "changeme"
+
+# Video pipeline infrastructure versions
+# Defaults below are current stable at plan writing date (2026-04-03).
+# Verify with: helm search repo strimzi/strimzi-kafka-operator
+#              helm search repo bitnami/redis --versions | head -3
+#              helm search repo minio/minio --versions | head -3
+# Update if a newer patch version is available before first deploy.
+video_pipeline:
+  strimzi_version: "0.51.0"
+  kafka_version: "3.9.0"
+  redis_chart_version: "20.6.3"
+  minio_chart_version: "5.4.0"
+  zfs_minio_path: "/mnt/storage/minio"
