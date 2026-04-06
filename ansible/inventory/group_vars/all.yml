@@ -148,7 +148,7 @@ minio_root_password: !vault |
 # Update if a newer patch version is available before first deploy.
 video_pipeline:
   strimzi_version: "0.51.0"
-  kafka_version: "3.9.0"
-  redis_chart_version: "20.6.3"
+  kafka_version: "4.1.1"
+  redis_chart_version: "25.3.9"
   minio_chart_version: "5.4.0"
   zfs_minio_path: "/mnt/storage/minio"

@@ -3,106 +3,55 @@
   hosts: localhost
   connection: local
   gather_facts: false
+  become: false
   vars:
-    kubeconfig: "{{ lookup('env', 'HOME') }}/.kube/config"
-    kube_context: homelab
+    kube: "kubectl --kubeconfig {{ lookup('env', 'HOME') }}/.kube/config --context homelab"
+    helm: "helm --kubeconfig {{ lookup('env', 'HOME') }}/.kube/config --kube-context homelab"
 
   tasks:
     - name: Uninstall MinIO
-      kubernetes.core.helm:
-        kubeconfig: "{{ kubeconfig }}"
-        kube_context: "{{ kube_context }}"
-        name: minio
-        release_namespace: minio
-        state: absent
-        wait: true
-        timeout: "2m0s"
-      ignore_errors: true  # Continue if already absent
+      shell: "{{ helm }} uninstall minio --namespace minio --wait --timeout 2m"
+      ignore_errors: true
+      changed_when: false
 
     - name: Delete MinIO PVC
-      kubernetes.core.k8s:
-        kubeconfig: "{{ kubeconfig }}"
-        context: "{{ kube_context }}"
-        api_version: v1
-        kind: PersistentVolumeClaim
-        name: minio-data
-        namespace: minio
-        state: absent
-        wait: true
-        wait_timeout: 60
+      shell: "{{ kube }} delete pvc minio-data -n minio --ignore-not-found --timeout=60s"
+      ignore_errors: true
+      changed_when: false
 
     - name: Delete MinIO PV
-      kubernetes.core.k8s:
-        kubeconfig: "{{ kubeconfig }}"
-        context: "{{ kube_context }}"
-        api_version: v1
-        kind: PersistentVolume
-        name: minio-pv
-        state: absent
+      shell: "{{ kube }} delete pv minio-pv --ignore-not-found"
+      ignore_errors: true
+      changed_when: false
 
     - name: Uninstall Redis
-      kubernetes.core.helm:
-        kubeconfig: "{{ kubeconfig }}"
-        kube_context: "{{ kube_context }}"
-        name: redis
-        release_namespace: redis
-        state: absent
-        wait: true
-        timeout: "2m0s"
+      shell: "{{ helm }} uninstall redis --namespace redis --wait --timeout 2m"
       ignore_errors: true
+      changed_when: false
 
     - name: Delete KafkaNodePool CR
-      kubernetes.core.k8s:
-        kubeconfig: "{{ kubeconfig }}"
-        context: "{{ kube_context }}"
-        api_version: kafka.strimzi.io/v1beta2
-        kind: KafkaNodePool
-        name: dual-role
-        namespace: kafka
-        state: absent
-        wait: true
-        wait_timeout: 120
+      shell: "{{ kube }} delete kafkanodepool dual-role -n kafka --ignore-not-found --timeout=120s"
       ignore_errors: true
+      changed_when: false
 
     - name: Delete Kafka CR
-      kubernetes.core.k8s:
-        kubeconfig: "{{ kubeconfig }}"
-        context: "{{ kube_context }}"
-        api_version: kafka.strimzi.io/v1beta2
-        kind: Kafka
-        name: kafka-cluster
-        namespace: kafka
-        state: absent
-        wait: true
-        wait_timeout: 120
+      shell: "{{ kube }} delete kafka kafka-cluster -n kafka --ignore-not-found --timeout=120s"
       ignore_errors: true
+      changed_when: false
 
     - name: Uninstall Strimzi operator
-      kubernetes.core.helm:
-        kubeconfig: "{{ kubeconfig }}"
-        kube_context: "{{ kube_context }}"
-        name: strimzi
-        release_namespace: kafka
-        state: absent
-        wait: true
-        timeout: "3m0s"
+      shell: "{{ helm }} uninstall strimzi --namespace kafka --wait --timeout 3m"
       ignore_errors: true
+      changed_when: false
 
     - name: Delete namespaces
-      kubernetes.core.k8s:
-        kubeconfig: "{{ kubeconfig }}"
-        context: "{{ kube_context }}"
-        api_version: v1
-        kind: Namespace
-        name: "{{ item }}"
-        state: absent
-        wait: true
-        wait_timeout: 120
+      shell: "{{ kube }} delete namespace {{ item }} --ignore-not-found --timeout=120s"
       loop:
         - minio
         - redis
         - kafka
       ignore_errors: true
+      changed_when: false
 
     - name: Teardown complete
       debug:

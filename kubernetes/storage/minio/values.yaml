@@ -38,11 +38,9 @@ ingress:
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     traefik.ingress.kubernetes.io/router.tls: "true"
+  path: /
   hosts:
-    - host: minio.tmf-solutions.com
-      paths:
-        - path: /
-          pathType: Prefix
+    - minio.tmf-solutions.com
   tls:
     - secretName: tmf-solutions-tls
       hosts:
@@ -55,11 +53,9 @@ consoleIngress:
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     traefik.ingress.kubernetes.io/router.tls: "true"
+  path: /
   hosts:
-    - host: minio-console.tmf-solutions.com
-      paths:
-        - path: /
-          pathType: Prefix
+    - minio-console.tmf-solutions.com
   tls:
     - secretName: tmf-solutions-tls
       hosts:

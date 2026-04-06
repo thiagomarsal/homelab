@@ -24,7 +24,7 @@ master:
 
   persistence:
     enabled: true
-    storageClass: longhorn
+    storageClass: local-path
     size: 2Gi
 
   resources:
