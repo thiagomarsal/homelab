@@ -2,7 +2,7 @@
 - name: Set timezone on all nodes
   hosts: all
   vars:
-    timezone: "America/Chicago"
+    timezone: "America/Denver"
   tasks:
     - name: Set system timezone
       timezone:
