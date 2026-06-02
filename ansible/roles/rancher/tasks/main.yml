@@ -107,6 +107,7 @@
     src: "{{ playbook_dir }}/../../../kubernetes/"
     dest: /tmp/homelab-k8s/
     mode: '0644'
+  tags: [hoa]
 
 - name: Apply namespaces
   command: k3s kubectl apply -f /tmp/homelab-k8s/base/namespaces.yml
@@ -354,6 +355,44 @@
     KUBECONFIG: /etc/rancher/k3s/k3s.yaml
   changed_when: false
 
+- name: Apply HOA namespace
+  command: k3s kubectl apply -f /tmp/homelab-k8s/apps/hoa/namespace.yaml
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  changed_when: false
+  tags: [hoa]
+
+- name: Apply HOA DB secret
+  template:
+    src: hoa-secret.yml.j2
+    dest: /tmp/hoa-secret.yml
+    mode: '0600'
+  tags: [hoa]
+
+- name: Create HOA DB secret
+  command: k3s kubectl apply -f /tmp/hoa-secret.yml
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  changed_when: false
+  tags: [hoa]
+
+- name: Remove HOA DB secret temp file
+  file:
+    path: /tmp/hoa-secret.yml
+    state: absent
+  tags: [hoa]
+
+- name: Apply HOA manifests
+  command: >-
+    k3s kubectl apply
+    -f /tmp/homelab-k8s/apps/hoa/mariadb.yaml
+    -f /tmp/homelab-k8s/apps/hoa/wordpress.yaml
+    -f /tmp/homelab-k8s/apps/hoa/ingressroute.yml
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  changed_when: false
+  tags: [hoa]
+
 - name: Apply Immich service and IngressRoute
   command: >-
     k3s kubectl apply
@@ -431,6 +470,7 @@
       n8n:        https://{{ n8n_hostname }}
       Immich:     https://{{ immich_hostname }}
       Nextcloud:  https://{{ nextcloud_hostname }}
+      HOA:        https://{{ hoa_hostname }}
       ================================================
       Initial Rancher password: admin
       Loki:       https://loki.tmf-solutions.com

@@ -1,0 +1,83 @@
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: hoa-wordpress-data
+  namespace: hoa
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: longhorn
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wordpress
+  namespace: hoa
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: wordpress
+  strategy:
+    type: Recreate  # required — PVC is RWO, only one pod at a time
+  template:
+    metadata:
+      labels:
+        app: wordpress
+    spec:
+      containers:
+        - name: wordpress
+          image: wordpress:6.7.2-apache  # bump deliberately
+          ports:
+            - containerPort: 80
+          env:
+            - name: WORDPRESS_DB_HOST
+              value: "mariadb.hoa.svc.cluster.local:3306"
+            # Behind Traefik (TLS terminated at proxy): trust X-Forwarded-Proto
+            # and pin the site URLs so WP builds https links and avoids redirect loops.
+            - name: WORDPRESS_CONFIG_EXTRA
+              value: |
+                define('WP_HOME', 'https://hoa.tmf-solutions.com');
+                define('WP_SITEURL', 'https://hoa.tmf-solutions.com');
+                if (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https') {
+                    $_SERVER['HTTPS'] = 'on';
+                }
+          envFrom:
+            - secretRef:
+                name: hoa-db-secret  # provides WORDPRESS_DB_NAME/USER/PASSWORD (extra MARIADB_* keys are harmless)
+          volumeMounts:
+            - name: data
+              mountPath: /var/www/html
+          resources:
+            requests:
+              memory: 256Mi
+              cpu: 100m
+            limits:
+              memory: 512Mi
+              cpu: 500m
+          readinessProbe:
+            httpGet:
+              path: /wp-login.php
+              port: 80
+            initialDelaySeconds: 20
+            periodSeconds: 15
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: hoa-wordpress-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: wordpress
+  namespace: hoa
+spec:
+  selector:
+    app: wordpress
+  ports:
+    - port: 80
+      targetPort: 80
