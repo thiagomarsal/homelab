@@ -22,7 +22,7 @@ k3s_api_port: 6443
 k3s_api_endpoint: "https://{{ k3s_api_vip }}:{{ k3s_api_port }}"
 
 # kube-vip configuration
-kubevip_version: "v0.8.7"
+kubevip_version: "v0.9.1"
 kubevip_interface: "eth0"  # Default virtio NIC name in Proxmox VMs
 
 # MetalLB configuration
