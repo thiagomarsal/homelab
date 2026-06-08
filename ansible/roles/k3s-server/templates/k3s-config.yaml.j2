@@ -1,0 +1,8 @@
+# Reserve resources for k3s/etcd/system — prevents app pods from starving control plane
+# Applied on all master nodes (combined master+worker setup)
+kubelet-arg:
+  - "kube-reserved=cpu=500m,memory=512Mi,ephemeral-storage=2Gi"
+  - "system-reserved=cpu=200m,memory=512Mi,ephemeral-storage=2Gi"
+  - "eviction-hard=memory.available<300Mi,nodefs.available<5%"
+  - "eviction-soft=memory.available<500Mi,nodefs.available<10%"
+  - "eviction-soft-grace-period=memory.available=60s,nodefs.available=60s"
