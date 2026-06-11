@@ -43,8 +43,8 @@ controller:
 
 persistence:
   enabled: true
-  storageClass: local-path
-  size: 20Gi
+  storageClass: longhorn
+  size: 5Gi
 
 # Disable agent side of the chart — add agents separately if needed
 agent:
