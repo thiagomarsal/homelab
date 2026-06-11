@@ -31,3 +31,9 @@ Thumbs.db
 # env files with secrets
 .env
 !.env.example
+
+# Browser testing artifacts
+*.png
+*.jpg
+*.jpeg
+.playwright-mcp/
