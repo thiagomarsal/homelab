@@ -1,4 +1,23 @@
 ---
+# Primary: auburn-fields.com (www + apex)
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: hoa-auburn
+  namespace: hoa
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`auburn-fields.com`) || Host(`www.auburn-fields.com`)
+      kind: Rule
+      services:
+        - name: wordpress
+          port: 80
+  tls:
+    secretName: auburn-fields-tls  # cert issued by letsencrypt-cloudflare
+---
+# Staging: hoa.tmf-solutions.com (keep for dev/testing)
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:

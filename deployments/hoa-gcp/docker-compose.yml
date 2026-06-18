@@ -1,0 +1,58 @@
+services:
+  mariadb:
+    image: mariadb:10.11
+    restart: always
+    environment:
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      MARIADB_DATABASE: ${DB_NAME}
+      MARIADB_USER: ${DB_USER}
+      MARIADB_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - mariadb_data:/var/lib/mysql
+    networks:
+      - hoa_net
+    # e2-micro tuning — keep MariaDB lean
+    command: >
+      --innodb-buffer-pool-size=64M
+      --max-connections=50
+      --query-cache-size=0
+      --tmp-table-size=16M
+      --max-heap-table-size=16M
+
+  wordpress:
+    image: wordpress:6.5-apache
+    restart: always
+    depends_on:
+      - mariadb
+    ports:
+      - "80:80"
+    environment:
+      WORDPRESS_DB_HOST: mariadb:3306
+      WORDPRESS_DB_NAME: ${DB_NAME}
+      WORDPRESS_DB_USER: ${DB_USER}
+      WORDPRESS_DB_PASSWORD: ${DB_PASSWORD}
+      WORDPRESS_TABLE_PREFIX: wp_
+      # Trust Cloudflare proxy — sets HTTPS correctly behind proxy
+      WORDPRESS_CONFIG_EXTRA: |
+        define('WP_HOME', 'https://auburn-fields.com');
+        define('WP_SITEURL', 'https://auburn-fields.com');
+        if (isset($_SERVER['HTTP_CF_VISITOR'])) {
+          $cf = json_decode($_SERVER['HTTP_CF_VISITOR'], true);
+          if (isset($cf['scheme']) && $cf['scheme'] === 'https') {
+            $_SERVER['HTTPS'] = 'on';
+          }
+        }
+        define('FORCE_SSL_ADMIN', true);
+        define('WP_MEMORY_LIMIT', '256M');
+    volumes:
+      - wp_data:/var/www/html
+    networks:
+      - hoa_net
+
+volumes:
+  mariadb_data:
+  wp_data:
+
+networks:
+  hoa_net:
+    driver: bridge

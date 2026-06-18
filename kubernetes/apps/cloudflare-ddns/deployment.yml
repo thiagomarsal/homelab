@@ -37,3 +37,43 @@ spec:
             cpu: 10m
             memory: 16Mi
       restartPolicy: Always
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflare-ddns-auburn
+  namespace: cloudflare-ddns
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cloudflare-ddns-auburn
+  template:
+    metadata:
+      labels:
+        app: cloudflare-ddns-auburn
+    spec:
+      containers:
+      - name: ddns
+        image: oznu/cloudflare-ddns:latest
+        imagePullPolicy: Always
+        env:
+        - name: API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: cloudflare-token
+              key: cloudflare-token
+        - name: ZONE
+          value: "auburn-fields.com"
+        - name: SUBDOMAIN
+          value: ""
+        - name: PROXIED
+          value: "true"
+        resources:
+          limits:
+            cpu: 50m
+            memory: 32Mi
+          requests:
+            cpu: 10m
+            memory: 16Mi
+      restartPolicy: Always

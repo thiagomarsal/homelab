@@ -41,8 +41,8 @@ spec:
             # and pin the site URLs so WP builds https links and avoids redirect loops.
             - name: WORDPRESS_CONFIG_EXTRA
               value: |
-                define('WP_HOME', 'https://hoa.tmf-solutions.com');
-                define('WP_SITEURL', 'https://hoa.tmf-solutions.com');
+                define('WP_HOME', 'https://auburn-fields.com');
+                define('WP_SITEURL', 'https://auburn-fields.com');
                 if (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https') {
                     $_SERVER['HTTPS'] = 'on';
                 }

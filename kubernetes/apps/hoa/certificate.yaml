@@ -1,0 +1,15 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: auburn-fields-tls
+  namespace: hoa
+spec:
+  secretName: auburn-fields-tls
+  issuerRef:
+    name: letsencrypt-cloudflare
+    kind: ClusterIssuer
+  dnsNames:
+    - "auburn-fields.com"
+    - "www.auburn-fields.com"
+  duration: 2160h
+  renewBefore: 360h
