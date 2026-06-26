@@ -1,0 +1,384 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: af-newsletter-plugin
+  namespace: hoa
+data:
+  auburn-fields-newsletter.php: |
+    <?php
+    /**
+     * Auburn Fields HOA — Newsletter subscription form + auto-notify on new posts
+     */
+
+    // ── Subscription form on news/blog archive ─────────────────────────────────
+
+    function af_newsletter_block() {
+        ob_start();
+        ?>
+        <div class="af-newsletter-section" style="width:100%;box-sizing:border-box;padding:2.5rem 2rem;background:#f7f9fc;border-radius:8px;text-align:center;border:1px solid #e2e8f0;margin-bottom:2rem;">
+            <h3 style="margin:0 0 0.5rem;font-size:1.5rem;color:#1a2744;">Stay Informed</h3>
+            <p style="margin:0 0 1.5rem;color:#4a5568;font-size:1rem;max-width:600px;margin-left:auto;margin-right:auto;">Subscribe to the Auburn Fields HOA newsletter for community updates, event announcements, and important notices.</p>
+            <div style="max-width:700px;margin:0 auto;">
+                <?php echo do_shortcode('[fluentform id="2"]'); ?>
+            </div>
+            <p style="margin:0.75rem 0 0;font-size:0.8rem;color:#718096;">By subscribing you agree to our <a href="<?php echo esc_url(home_url('/privacy-policy/')); ?>" style="color:#1a2744;">Privacy Policy</a>.</p>
+        </div>
+        <?php
+        return ob_get_clean();
+    }
+
+    add_action('loop_start', function($query) {
+        if (!$query->is_main_query() || !is_home()) return;
+        echo af_newsletter_block();
+    });
+
+    add_action('loop_end', function($query) {
+        if (!$query->is_main_query() || !is_home()) return;
+        $block = af_newsletter_block();
+        echo str_replace('margin-bottom:2rem', 'margin-top:2rem;margin-bottom:0', $block);
+    });
+
+    // ── Handle unsubscribe requests ─────────────────────────────────────────────
+
+    add_action('init', function() {
+        $token = sanitize_text_field($_GET['af_unsubscribe'] ?? '');
+        if (empty($token)) return;
+
+        global $wpdb;
+        $sub = $wpdb->get_row($wpdb->prepare(
+            'SELECT id, email FROM wp_mailpoet_subscribers WHERE unsubscribe_token=%s', $token
+        ));
+
+        if (!$sub) {
+            wp_die('<p style="font-family:Arial;text-align:center;padding:40px;">Invalid or expired unsubscribe link.</p>', 'Unsubscribe', ['response' => 400]);
+        }
+
+        $wpdb->query($wpdb->prepare(
+            'UPDATE wp_mailpoet_subscribers SET status="unsubscribed", updated_at=%s WHERE id=%d',
+            current_time('mysql'), $sub->id
+        ));
+        $wpdb->query($wpdb->prepare(
+            'UPDATE wp_mailpoet_subscriber_segment SET status="unsubscribed", updated_at=%s WHERE subscriber_id=%d AND segment_id=3',
+            current_time('mysql'), $sub->id
+        ));
+
+        wp_die(
+            '<div style="font-family:Arial,sans-serif;max-width:500px;margin:80px auto;text-align:center;padding:40px;background:#f7f9fc;border-radius:8px;border:1px solid #e2e8f0;">
+                <h2 style="color:#1a2744;margin:0 0 12px;">Unsubscribed</h2>
+                <p style="color:#4a5568;margin:0 0 24px;">You have been removed from the Auburn Fields HOA newsletter. You will no longer receive email notifications.</p>
+                <a href="' . esc_url(home_url('/news/')) . '" style="background:#1a2744;color:#fff;text-decoration:none;padding:10px 24px;border-radius:6px;font-size:14px;">Back to Community News</a>
+            </div>',
+            'Unsubscribed from Auburn Fields HOA Newsletter',
+            ['response' => 200]
+        );
+    });
+
+    // ── Auto-subscribe FluentForms form 2 to MailPoet list ─────────────────────
+
+    add_action('fluentform_before_insert_submission', function($entryId, $formData, $form) {
+        if ((int) $form->id !== 2) return;
+        $email = strtolower(trim($formData['email'] ?? ''));
+        if (!is_email($email)) return;
+        global $wpdb;
+        $now   = current_time('mysql');
+        $token = bin2hex(random_bytes(16));
+
+        $existing = $wpdb->get_row($wpdb->prepare(
+            'SELECT id, status, unsubscribe_token FROM wp_mailpoet_subscribers WHERE email=%s', $email
+        ));
+
+        $send_welcome = false;
+
+        if ($existing) {
+            $existing_token = $existing->unsubscribe_token ?: $token;
+            if ($existing->status !== 'subscribed') {
+                $send_welcome = true;
+            }
+            $wpdb->query($wpdb->prepare(
+                'UPDATE wp_mailpoet_subscribers SET status="subscribed", unsubscribe_token=%s, updated_at=%s WHERE id=%d',
+                $existing_token, $now, $existing->id
+            ));
+            $sub_id     = $existing->id;
+            $used_token = $existing_token;
+        } else {
+            $wpdb->query($wpdb->prepare(
+                'INSERT INTO wp_mailpoet_subscribers (email, status, unsubscribe_token, created_at, updated_at) VALUES (%s, "subscribed", %s, %s, %s)',
+                $email, $token, $now, $now
+            ));
+            $sub_id       = $wpdb->insert_id;
+            $used_token   = $token;
+            $send_welcome = true;
+        }
+
+        $linked = $wpdb->get_var($wpdb->prepare(
+            'SELECT id FROM wp_mailpoet_subscriber_segment WHERE subscriber_id=%d AND segment_id=3', $sub_id
+        ));
+        if ($linked) {
+            $wpdb->query($wpdb->prepare(
+                'UPDATE wp_mailpoet_subscriber_segment SET status="subscribed", updated_at=%s WHERE subscriber_id=%d AND segment_id=3',
+                $now, $sub_id
+            ));
+        } else {
+            $wpdb->query($wpdb->prepare(
+                'INSERT INTO wp_mailpoet_subscriber_segment (subscriber_id, segment_id, status, created_at, updated_at) VALUES (%d, 3, "subscribed", %s, %s)',
+                $sub_id, $now, $now
+            ));
+        }
+
+        if ($send_welcome) {
+            $site_name = get_bloginfo('name');
+            $site_url  = home_url();
+            $unsub_url = add_query_arg('af_unsubscribe', $used_token, $site_url);
+            $headers   = [
+                'Content-Type: text/html; charset=UTF-8',
+                'From: Auburn Fields HOA <board@auburn-fields.com>',
+            ];
+            $body = '<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+    <body style="margin:0;padding:0;background:#f4f6f9;font-family:Arial,sans-serif;">
+    <table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f6f9;padding:30px 0;">
+    <tr><td align="center">
+    <table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:8px;overflow:hidden;max-width:600px;width:100%;">
+      <tr><td style="background:#1a2744;padding:24px 32px;text-align:center;">
+        <h1 style="margin:0;color:#ffffff;font-size:22px;">' . esc_html($site_name) . '</h1>
+        <p style="margin:6px 0 0;color:#a0b0cc;font-size:13px;">Community Newsletter</p>
+      </td></tr>
+      <tr><td style="padding:32px;">
+        <h2 style="margin:0 0 16px;color:#1a2744;font-size:22px;">Welcome to the Auburn Fields HOA Newsletter!</h2>
+        <p style="margin:0 0 16px;color:#4a5568;font-size:15px;line-height:1.6;">You are now subscribed to community updates, event announcements, and important notices from the Auburn Fields HOA board.</p>
+        <p style="margin:0 0 24px;color:#4a5568;font-size:15px;line-height:1.6;">You will receive an email whenever a new post is published on our community website.</p>
+        <p style="text-align:center;margin:28px 0 0;">
+          <a href="' . esc_url($site_url) . '/news/" style="background:#1a2744;color:#ffffff;text-decoration:none;padding:12px 28px;border-radius:6px;font-size:15px;font-weight:bold;display:inline-block;">Visit Community News</a>
+        </p>
+      </td></tr>
+      <tr><td style="background:#f4f6f9;padding:20px 32px;text-align:center;border-top:1px solid #e2e8f0;">
+        <p style="margin:0 0 8px;color:#718096;font-size:12px;">You are receiving this because you subscribed to the ' . esc_html($site_name) . ' newsletter.</p>
+        <p style="margin:0;font-size:12px;">
+          <a href="' . esc_url($site_url) . '/news/" style="color:#1a2744;">Visit our website</a>
+          &nbsp;&bull;&nbsp;
+          <a href="' . esc_url($site_url) . '/privacy-policy/" style="color:#718096;">Privacy Policy</a>
+          &nbsp;&bull;&nbsp;
+          <a href="' . esc_url($unsub_url) . '" style="color:#718096;">Unsubscribe</a>
+        </p>
+      </td></tr>
+    </table>
+    </td></tr></table></body></html>';
+            wp_mail($email, 'Welcome to the ' . $site_name . ' Newsletter', $body, $headers);
+        }
+    }, 10, 3);
+
+    // ── Admin meta box: Newsletter status + Resend button ─────────────────────
+
+    add_action('add_meta_boxes', function() {
+        add_meta_box(
+            'af_newsletter_status',
+            'Newsletter',
+            'af_newsletter_meta_box_cb',
+            'post',
+            'side',
+            'default'
+        );
+    });
+
+    function af_newsletter_meta_box_cb($post) {
+        $sent  = get_post_meta($post->ID, '_af_newsletter_sent', true);
+        $nonce = wp_create_nonce('af_resend_' . $post->ID);
+        if ($sent) {
+            echo '<p style="margin:0 0 10px;color:#2d6a2d;">&#10003; Sent: ' . esc_html($sent) . '</p>';
+        } else {
+            echo '<p style="margin:0 0 10px;color:#888;">Not sent yet.</p>';
+        }
+        echo '<p style="margin:0 0 10px;font-size:12px;color:#666;">Sends to all active subscribers.</p>';
+        ?>
+        <button type="button" id="af-resend-btn"
+            data-post="<?php echo esc_attr($post->ID); ?>"
+            data-nonce="<?php echo esc_attr($nonce); ?>"
+            class="button button-secondary" style="width:100%;">Resend Newsletter</button>
+        <p id="af-resend-msg" style="margin-top:8px;font-size:12px;min-height:1em;"></p>
+        <script>
+        document.getElementById('af-resend-btn').addEventListener('click', function() {
+            if (!confirm('Resend newsletter to all subscribers?')) return;
+            var btn = this;
+            var msg = document.getElementById('af-resend-msg');
+            btn.disabled = true;
+            btn.textContent = 'Sending…';
+            msg.textContent = '';
+            var data = new FormData();
+            data.append('action', 'af_resend_newsletter');
+            data.append('post_id', btn.dataset.post);
+            data.append('nonce', btn.dataset.nonce);
+            fetch(ajaxurl, {method: 'POST', body: data})
+                .then(function(r) { return r.json(); })
+                .then(function(res) {
+                    btn.disabled = false;
+                    btn.textContent = 'Resend Newsletter';
+                    msg.style.color = res.success ? '#2d6a2d' : '#c00';
+                    msg.textContent = res.data || (res.success ? 'Queued.' : 'Error.');
+                })
+                .catch(function() {
+                    btn.disabled = false;
+                    btn.textContent = 'Resend Newsletter';
+                    msg.style.color = '#c00';
+                    msg.textContent = 'Request failed.';
+                });
+        });
+        </script>
+        <?php
+    }
+
+    add_action('wp_ajax_af_resend_newsletter', function() {
+        $post_id = (int) ($_POST['post_id'] ?? 0);
+        if (!$post_id) wp_send_json_error('Missing post ID.');
+        if (!wp_verify_nonce($_POST['nonce'] ?? '', 'af_resend_' . $post_id)) wp_send_json_error('Invalid nonce.');
+        if (!current_user_can('edit_post', $post_id)) wp_send_json_error('Permission denied.');
+
+        $post = get_post($post_id);
+        if (!$post || $post->post_status !== 'publish') wp_send_json_error('Post not published.');
+
+        global $wpdb;
+        $subscribers = $wpdb->get_results("
+            SELECT s.email, s.unsubscribe_token
+            FROM wp_mailpoet_subscribers s
+            INNER JOIN wp_mailpoet_subscriber_segment ss ON s.id = ss.subscriber_id
+            WHERE s.status = 'subscribed'
+              AND ss.segment_id = 3
+              AND ss.status = 'subscribed'
+        ");
+
+        if (empty($subscribers)) wp_send_json_error('No active subscribers.');
+
+        $thumb = '';
+        if (has_post_thumbnail($post_id)) {
+            $img_url = get_the_post_thumbnail_url($post_id, 'large');
+            $thumb   = '<p style="text-align:center;"><img src="' . esc_url($img_url) . '" alt="" style="max-width:100%;height:auto;border-radius:6px;"></p>';
+        }
+
+        $queue_key = 'af_nl_queue_' . $post_id;
+        set_transient($queue_key, [
+            'subscribers' => $subscribers,
+            'offset'      => 0,
+            'subject'     => '[Auburn Fields HOA] ' . get_the_title($post),
+            'title'       => get_the_title($post),
+            'permalink'   => get_permalink($post),
+            'excerpt'     => wp_strip_all_tags(get_the_excerpt($post) ?: wp_trim_words($post->post_content, 40)),
+            'thumb'       => $thumb,
+            'site_name'   => get_bloginfo('name'),
+            'site_url'    => home_url(),
+        ], 2 * DAY_IN_SECONDS);
+
+        update_post_meta($post_id, '_af_newsletter_sent', current_time('mysql'));
+        wp_schedule_single_event(time(), 'af_newsletter_batch', [$queue_key]);
+
+        wp_send_json_success('Queued for ' . count($subscribers) . ' subscribers.');
+    });
+
+    // ── Queue newsletter on publish — batch-send via WP-Cron ───────────────────
+
+    define('AF_BATCH_SIZE',  50);
+    define('AF_BATCH_DELAY', 60);
+    define('AF_SEND_PAUSE',  1);
+
+    add_action('transition_post_status', function($new_status, $old_status, $post) {
+        if ($new_status !== 'publish' || $old_status === 'publish') return;
+        if ($post->post_type !== 'post') return;
+        if (wp_is_post_revision($post->ID) || wp_is_post_autosave($post->ID)) return;
+
+        if (get_post_meta($post->ID, '_af_newsletter_sent', true)) return;
+
+        global $wpdb;
+        $subscribers = $wpdb->get_results("
+            SELECT s.email, s.unsubscribe_token
+            FROM wp_mailpoet_subscribers s
+            INNER JOIN wp_mailpoet_subscriber_segment ss ON s.id = ss.subscriber_id
+            WHERE s.status = 'subscribed'
+              AND ss.segment_id = 3
+              AND ss.status = 'subscribed'
+        ");
+
+        if (empty($subscribers)) return;
+
+        $thumb = '';
+        if (has_post_thumbnail($post->ID)) {
+            $img_url = get_the_post_thumbnail_url($post->ID, 'large');
+            $thumb   = '<p style="text-align:center;"><img src="' . esc_url($img_url) . '" alt="" style="max-width:100%;height:auto;border-radius:6px;"></p>';
+        }
+
+        $queue_key = 'af_nl_queue_' . $post->ID;
+        set_transient($queue_key, [
+            'subscribers' => $subscribers,
+            'offset'      => 0,
+            'subject'     => '[Auburn Fields HOA] ' . get_the_title($post),
+            'title'       => get_the_title($post),
+            'permalink'   => get_permalink($post),
+            'excerpt'     => wp_strip_all_tags(get_the_excerpt($post) ?: wp_trim_words($post->post_content, 40)),
+            'thumb'       => $thumb,
+            'site_name'   => get_bloginfo('name'),
+            'site_url'    => home_url(),
+        ], 2 * DAY_IN_SECONDS);
+
+        update_post_meta($post->ID, '_af_newsletter_sent', current_time('mysql'));
+        wp_schedule_single_event(time(), 'af_newsletter_batch', [$queue_key]);
+    }, 10, 3);
+
+    add_action('af_newsletter_batch', function($queue_key) {
+        $queue = get_transient($queue_key);
+        if (!$queue) return;
+
+        $batch = array_slice($queue['subscribers'], $queue['offset'], AF_BATCH_SIZE);
+        if (empty($batch)) {
+            delete_transient($queue_key);
+            return;
+        }
+
+        $headers = [
+            'Content-Type: text/html; charset=UTF-8',
+            'From: Auburn Fields HOA <board@auburn-fields.com>',
+        ];
+
+        foreach ($batch as $sub) {
+            $unsub_url = add_query_arg('af_unsubscribe', $sub->unsubscribe_token, $queue['site_url']);
+
+            $body = '<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+    <body style="margin:0;padding:0;background:#f4f6f9;font-family:Arial,sans-serif;">
+    <table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f6f9;padding:30px 0;">
+    <tr><td align="center">
+    <table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:8px;overflow:hidden;max-width:600px;width:100%;">
+      <tr><td style="background:#1a2744;padding:24px 32px;text-align:center;">
+        <h1 style="margin:0;color:#ffffff;font-size:22px;">' . esc_html($queue['site_name']) . '</h1>
+        <p style="margin:6px 0 0;color:#a0b0cc;font-size:13px;">Community Newsletter</p>
+      </td></tr>
+      <tr><td style="padding:32px;">
+        <p style="margin:0 0 8px;color:#1a2744;font-size:13px;font-weight:bold;text-transform:uppercase;letter-spacing:1px;">New Post</p>
+        <h2 style="margin:0 0 20px;color:#1a2744;font-size:24px;line-height:1.3;">' . esc_html($queue['title']) . '</h2>
+        ' . $queue['thumb'] . '
+        <p style="margin:20px 0;color:#4a5568;font-size:15px;line-height:1.6;">' . esc_html($queue['excerpt']) . '</p>
+        <p style="text-align:center;margin:28px 0 0;">
+          <a href="' . esc_url($queue['permalink']) . '" style="background:#1a2744;color:#ffffff;text-decoration:none;padding:12px 28px;border-radius:6px;font-size:15px;font-weight:bold;display:inline-block;">Read Full Post</a>
+        </p>
+      </td></tr>
+      <tr><td style="background:#f4f6f9;padding:20px 32px;text-align:center;border-top:1px solid #e2e8f0;">
+        <p style="margin:0 0 8px;color:#718096;font-size:12px;">You are receiving this because you subscribed to the ' . esc_html($queue['site_name']) . ' newsletter.</p>
+        <p style="margin:0;font-size:12px;">
+          <a href="' . esc_url($queue['site_url']) . '/news/" style="color:#1a2744;">Visit our website</a>
+          &nbsp;&bull;&nbsp;
+          <a href="' . esc_url($queue['site_url']) . '/privacy-policy/" style="color:#718096;">Privacy Policy</a>
+          &nbsp;&bull;&nbsp;
+          <a href="' . esc_url($unsub_url) . '" style="color:#718096;">Unsubscribe</a>
+        </p>
+      </td></tr>
+    </table>
+    </td></tr></table></body></html>';
+
+            wp_mail($sub->email, $queue['subject'], $body, $headers);
+            sleep(AF_SEND_PAUSE);
+        }
+
+        $new_offset = $queue['offset'] + AF_BATCH_SIZE;
+
+        if ($new_offset < count($queue['subscribers'])) {
+            $queue['offset'] = $new_offset;
+            set_transient($queue_key, $queue, 2 * DAY_IN_SECONDS);
+            wp_schedule_single_event(time() + AF_BATCH_DELAY, 'af_newsletter_batch', [$queue_key]);
+        } else {
+            delete_transient($queue_key);
+        }
+    });

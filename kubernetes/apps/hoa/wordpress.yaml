@@ -43,6 +43,7 @@ spec:
               value: |
                 define('WP_HOME', 'https://auburn-fields.com');
                 define('WP_SITEURL', 'https://auburn-fields.com');
+                define('WP_CACHE', true);
                 if (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https') {
                     $_SERVER['HTTPS'] = 'on';
                 }
@@ -52,6 +53,10 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /var/www/html
+            - name: newsletter-plugin
+              mountPath: /var/www/html/wp-content/mu-plugins/auburn-fields-newsletter.php
+              subPath: auburn-fields-newsletter.php
+              readOnly: true
           resources:
             requests:
               memory: 256Mi
@@ -68,6 +73,9 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: hoa-wordpress-data
+        - name: newsletter-plugin
+          configMap:
+            name: af-newsletter-plugin
 ---
 apiVersion: v1
 kind: Service
