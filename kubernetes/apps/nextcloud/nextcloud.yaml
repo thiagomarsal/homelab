@@ -1,0 +1,137 @@
+---
+# Split PVCs mirror the source LXC's layout: app code+config separate from
+# user data (source used datadirectory=/mnt/data/ncdata/data, outside the
+# webroot). Keeps upgrades/backups of each independent.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nextcloud-www
+  namespace: nextcloud
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: longhorn
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nextcloud-data
+  namespace: nextcloud
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: longhorn
+  resources:
+    requests:
+      storage: 20Gi  # source LXC uses 12Gi; headroom for growth
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nextcloud
+  namespace: nextcloud
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nextcloud
+  strategy:
+    type: Recreate  # required — PVCs are RWO, only one pod at a time
+  template:
+    metadata:
+      labels:
+        app: nextcloud
+    spec:
+      containers:
+        - name: nextcloud
+          image: nextcloud:32.0.1-apache  # matches source install exactly
+          ports:
+            - containerPort: 80
+          env:
+            - name: MYSQL_HOST
+              value: "mariadb.nextcloud.svc.cluster.local"
+            - name: REDIS_HOST
+              value: "redis.nextcloud.svc.cluster.local"
+            - name: NEXTCLOUD_TRUSTED_DOMAINS
+              value: "drive.tmf-solutions.com"
+            - name: NEXTCLOUD_DATA_DIR
+              value: "/var/www/html/data"
+          envFrom:
+            - secretRef:
+                name: nextcloud-db-secret  # MYSQL_DATABASE/MYSQL_USER/MYSQL_PASSWORD
+            - secretRef:
+                name: nextcloud-redis-secret  # REDIS_HOST_PASSWORD
+          volumeMounts:
+            - name: www
+              mountPath: /var/www/html
+            - name: data
+              mountPath: /var/www/html/data
+            - name: extra-config
+              mountPath: /var/www/html/config/overwrite.config.php
+              subPath: overwrite.config.php
+              readOnly: true
+          resources:
+            requests:
+              memory: 512Mi
+              cpu: 200m
+            limits:
+              memory: 1Gi
+              cpu: 1
+          readinessProbe:
+            tcpSocket:
+              port: 80
+            initialDelaySeconds: 20
+            periodSeconds: 15
+      volumes:
+        - name: www
+          persistentVolumeClaim:
+            claimName: nextcloud-www
+        - name: data
+          persistentVolumeClaim:
+            claimName: nextcloud-data
+        - name: extra-config
+          configMap:
+            name: nextcloud-extra-config
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: nextcloud-cron
+  namespace: nextcloud
+spec:
+  schedule: "*/5 * * * *"  # matches source LXC's crontab
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          # RWO PVCs can only attach to one node at a time — co-locate with
+          # the main nextcloud pod to avoid Multi-Attach scheduling errors.
+          affinity:
+            podAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                - labelSelector:
+                    matchLabels:
+                      app: nextcloud
+                  topologyKey: kubernetes.io/hostname
+          securityContext:
+            runAsUser: 33  # www-data — must match config.php's owner
+          containers:
+            - name: nextcloud-cron
+              image: nextcloud:32.0.1-apache
+              command: ["php", "-f", "/var/www/html/cron.php"]
+              volumeMounts:
+                - name: www
+                  mountPath: /var/www/html
+                - name: data
+                  mountPath: /var/www/html/data
+          volumes:
+            - name: www
+              persistentVolumeClaim:
+                claimName: nextcloud-www
+            - name: data
+              persistentVolumeClaim:
+                claimName: nextcloud-data
+          restartPolicy: Never

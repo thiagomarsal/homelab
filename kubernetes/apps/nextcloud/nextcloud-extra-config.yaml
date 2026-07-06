@@ -1,0 +1,18 @@
+---
+# Loaded automatically — Nextcloud reads every *.config.php file under config/.
+# Mirrors the WORDPRESS_CONFIG_EXTRA trick used for the hoa/wordpress app:
+# behind Traefik (TLS terminated at the proxy), trust X-Forwarded-Proto so
+# Nextcloud builds https links and doesn't redirect-loop.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nextcloud-extra-config
+  namespace: nextcloud
+data:
+  overwrite.config.php: |
+    <?php
+    $CONFIG = [
+      'overwriteprotocol' => 'https',
+      'overwrite.cli.url' => 'https://drive.tmf-solutions.com/',
+      'trusted_proxies' => ['10.42.0.0/16'],
+    ];
