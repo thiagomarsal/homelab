@@ -8,7 +8,7 @@ spec:
   entryPoints:
     - websecure
   routes:
-    - match: Host(`immich.tmf-solutions.com`)
+    - match: Host(`photos.tmf-solutions.com`)
       kind: Rule
       services:
         - name: immich
