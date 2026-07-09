@@ -10,6 +10,31 @@ data:
      * Auburn Fields HOA — Newsletter subscription form + auto-notify on new posts
      */
 
+    // ── Force password change on first login ───────────────────────────────────
+
+    add_action('admin_init', function() {
+        if (!is_user_logged_in()) return;
+        $user = wp_get_current_user();
+        if (!get_user_meta($user->ID, '_af_force_pw_change', true)) return;
+        $pagenow = $GLOBALS['pagenow'] ?? '';
+        if (in_array($pagenow, ['profile.php', 'admin-ajax.php'], true)) return;
+        wp_safe_redirect(admin_url('profile.php'));
+        exit;
+    });
+
+    add_action('admin_notices', function() {
+        if (!is_user_logged_in()) return;
+        $user = wp_get_current_user();
+        if (!get_user_meta($user->ID, '_af_force_pw_change', true)) return;
+        if (($GLOBALS['pagenow'] ?? '') !== 'profile.php') return;
+        echo '<div class="notice notice-warning"><p><strong>Action required:</strong> You must set a new password before using the dashboard. Scroll down to <strong>Account Management</strong> and enter a new password.</p></div>';
+    });
+
+    add_action('profile_update', function($user_id) {
+        if (empty($_POST['pass1'])) return;
+        delete_user_meta($user_id, '_af_force_pw_change');
+    });
+
     // ── Subscription form on news/blog archive ─────────────────────────────────
 
     function af_newsletter_block() {
