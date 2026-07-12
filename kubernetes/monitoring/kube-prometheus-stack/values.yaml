@@ -8,6 +8,10 @@ alertmanager:
 # ── Prometheus ───────────────────────────────────────────────────────────────
 prometheus:
   prometheusSpec:
+    # Pinned to worker-2 — was landing on master3 (tightest host, also fronts
+    # pfSense) and alone used 1.75Gi, the single biggest pod in the cluster.
+    nodeSelector:
+      kubernetes.io/hostname: k3s-worker-2
     retention: 15d
     retentionSize: "7GB"
     storageSpec:
@@ -39,10 +43,11 @@ prometheus:
         static_configs:
           # Replace with your actual PVE node IPs
           - targets:
-              - 192.168.1.10   # pve-node-1
-              - 192.168.1.11   # pve-node-2
-              - 192.168.1.12   # pve-node-3
-              - 192.168.1.13   # pve-node-4
+              - 192.168.1.10   # pve01
+              - 192.168.1.11   # pve02
+              - 192.168.1.12   # pve03
+              - 192.168.1.13   # pve04
+              - 192.168.1.14   # pve05
         relabel_configs:
           - source_labels: [__address__]
             target_label: __param_target

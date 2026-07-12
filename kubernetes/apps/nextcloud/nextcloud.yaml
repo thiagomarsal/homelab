@@ -45,6 +45,8 @@ spec:
       labels:
         app: nextcloud
     spec:
+      nodeSelector:
+        kubernetes.io/hostname: k3s-worker-2
       containers:
         - name: nextcloud
           image: nextcloud:32.0.1-apache  # matches source install exactly

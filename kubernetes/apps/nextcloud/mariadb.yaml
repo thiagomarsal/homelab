@@ -29,6 +29,8 @@ spec:
       labels:
         app: mariadb
     spec:
+      nodeSelector:
+        kubernetes.io/hostname: k3s-worker-2
       securityContext:
         fsGroup: 999  # mariadb image runs as uid/gid 999
       containers:
