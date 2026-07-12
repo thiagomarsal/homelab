@@ -17,8 +17,8 @@ Global work standards from `~/.claude/CLAUDE.md` do not apply here.
 ## Infrastructure Overview
 
 - **Cluster**: k3s on Proxmox VMs (homelab context in `~/.kube/config`)
-- **Nodes**: k3s-master-1, k3s-worker-1 (on-demand, may be offline), k3s-worker-2, k3s-worker-3
-- **PVE hosts**: pve01–pve04 at 192.168.1.10–13 (bare-metal Proxmox hypervisors)
+- **Nodes**: k3s-master-1/2/3 (control-plane), k3s-worker-1 (on-demand, may be offline), k3s-worker-2 (always-on)
+- **PVE hosts**: pve01–pve05 at 192.168.1.10–14 (bare-metal Proxmox hypervisors); pve04 is on-demand, may be offline
 - **Ingress IP**: 192.168.1.61 (Traefik LoadBalancer, all `*.tmf-solutions.com` routes here)
 - **Namespace layout**: `monitoring`, `networking`, `storage`, and per-app namespaces
 - **IaC**: Ansible for bare-metal nodes (`ansible/`), raw manifests + HelmChartConfig for cluster (`kubernetes/`)

@@ -4,13 +4,14 @@
 
 | Node | IP | Role | Host |
 |------|----|------|------|
-| k3s-master-1 | 192.168.1.50 | k3s server (bootstrap) | Proxmox VM |
-| k3s-master-2 | 192.168.1.51 | k3s server | Proxmox VM |
-| k3s-master-3 | 192.168.1.52 | k3s server | Proxmox VM |
-| k3s-worker-1 | 192.168.1.53 | k3s agent (on-demand) | Proxmox VM |
+| k3s-master-1 | 192.168.1.50 | k3s server (bootstrap) | Proxmox VM (Debian 12 cloud-init) |
+| k3s-master-2 | 192.168.1.51 | k3s server | Proxmox VM (Debian 12 cloud-init) |
+| k3s-master-3 | 192.168.1.52 | k3s server | Proxmox VM (Debian 12 cloud-init) |
+| k3s-worker-1 | 192.168.1.53 | k3s agent (on-demand) | Proxmox VM (Debian 12 cloud-init) |
+| k3s-worker-2 | 192.168.1.54 | k3s agent (always-on) | Proxmox VM (Debian 12 cloud-init) |
 
-- **Proxmox cluster**: 4-node (pve01–pve04), pve04 is on-demand
-- **Storage**: ZFS raidz2 on pve04
+- **Proxmox cluster**: 5-node (pve01–pve05), pve04 is on-demand
+- **Storage**: ZFS raidz2 on pve04 (unverified — pve04 offline as of 2026-07-11, no other host shows a zpool)
 - **k3s version**: v1.34.5+k3s1
 - **HA VIP**: 192.168.1.60 (kube-vip v0.8.7)
 - **Load Balancer pool**: 192.168.1.61–199 (MetalLB v0.14.9)
