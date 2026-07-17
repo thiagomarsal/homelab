@@ -12,6 +12,17 @@ spec:
     requests:
       storage: 10Gi
 ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wordpress-php-uploads
+  namespace: hoa
+data:
+  uploads.ini: |
+    upload_max_filesize = 5M
+    post_max_size = 8M
+    max_execution_time = 60
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -57,6 +68,10 @@ spec:
               mountPath: /var/www/html/wp-content/mu-plugins/auburn-fields-newsletter.php
               subPath: auburn-fields-newsletter.php
               readOnly: true
+            - name: php-uploads-ini
+              mountPath: /usr/local/etc/php/conf.d/uploads.ini
+              subPath: uploads.ini
+              readOnly: true
           resources:
             requests:
               memory: 256Mi
@@ -76,6 +91,9 @@ spec:
         - name: newsletter-plugin
           configMap:
             name: af-newsletter-plugin
+        - name: php-uploads-ini
+          configMap:
+            name: wordpress-php-uploads
 ---
 apiVersion: v1
 kind: Service
