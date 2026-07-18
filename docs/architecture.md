@@ -10,8 +10,8 @@
 | k3s-worker-1 | 192.168.1.53 | k3s agent (on-demand) | Proxmox VM (Debian 12 cloud-init) |
 | k3s-worker-2 | 192.168.1.54 | k3s agent (always-on) | Proxmox VM (Debian 12 cloud-init) |
 
-- **Proxmox cluster**: 5-node (pve01–pve05), pve04 is on-demand
-- **Storage**: ZFS raidz2 on pve04 (unverified — pve04 offline as of 2026-07-11, no other host shows a zpool)
+- **Proxmox cluster**: 6-node (pve01–pve06), all always-on (no on-demand nodes as of 2026-07-17)
+- **Storage**: no cluster-wide ZFS pool — Longhorn (in-cluster) is the shared storage layer; each pve host uses local SATA/NVMe/lvmthin storage only
 - **k3s version**: v1.34.5+k3s1
 - **HA VIP**: 192.168.1.60 (kube-vip v0.8.7)
 - **Load Balancer pool**: 192.168.1.61–199 (MetalLB v0.14.9)
