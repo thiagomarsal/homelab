@@ -30,7 +30,7 @@ Internet
   └── pfSense 192.168.1.1 (port forward 80/443)
         └── MetalLB → Traefik (k3s)
               ├── n8n.tmf-solutions.com          → n8n Pod (k3s)
-              ├── nextcloud.tmf-solutions.com    → Nextcloud LXC 192.168.1.21
+              ├── nextcloud.tmf-solutions.com    → Nextcloud Pod (k3s)
               ├── immich.tmf-solutions.com       → Immich LXC 192.168.1.20
               ├── rancher.tmf-solutions.com      → Rancher (k3s)
               └── traefik.tmf-solutions.com      → Traefik dashboard (k3s)
@@ -56,6 +56,8 @@ Internet
 | Service | Type | Storage | Endpoint |
 |---------|------|---------|----------|
 | n8n | Deployment | Longhorn PVC 5Gi (SQLite) | n8n.tmf-solutions.com |
+| Nextcloud | Deployment + mariadb | Longhorn PVCs (3 replicas) | nextcloud.tmf-solutions.com |
+| HOA WordPress | Deployment + mariadb | Longhorn PVCs (3 replicas) | auburn-fields.com |
 | cloudflare-ddns | CronJob (*/5 min) | None | — |
 | Rancher | Helm (via Ansible) | — | rancher.tmf-solutions.com |
 | cert-manager | Helm | — | — |
@@ -67,9 +69,11 @@ Internet
 
 | Service | LXC IP | Endpoint | Notes |
 |---------|--------|---------|-------|
-| Nextcloud | 192.168.1.21 | nextcloud.tmf-solutions.com | File sync/share |
 | Immich | 192.168.1.20 | immich.tmf-solutions.com | Photo management |
 | Pi-hole | Proxmox LXC | — | Internal DNS, not proxied |
+
+Nextcloud was migrated from an LXC (192.168.1.21) to an in-cluster Deployment;
+that LXC (pve02, CT104) was decommissioned 2026-07-18.
 
 ---
 
