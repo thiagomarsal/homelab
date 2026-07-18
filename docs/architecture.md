@@ -46,9 +46,8 @@ Internet
 ## Storage
 
 - **Longhorn** (default StorageClass) — distributed block storage running inside k3s
-- `numberOfReplicas: 1` — no replication, data is non-critical
-- Independent of pve04 (on-demand) — data lives on master node disks
-- Recovery strategy: Proxmox VM-level snapshots/backups
+- `numberOfReplicas: 3` — one replica per master node; volumes survive losing any single node with zero data loss
+- Recovery strategy: Longhorn replica reattachment (automatic) + Proxmox VM-level snapshots/backups as a second layer
 
 ---
 
