@@ -105,8 +105,13 @@ metadata:
   namespace: nextcloud
 spec:
   schedule: "*/5 * * * *"  # matches source LXC's crontab
+  concurrencyPolicy: Forbid  # a stuck run must not stack — cap damage to one pod, not hundreds
+  startingDeadlineSeconds: 120
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
+      activeDeadlineSeconds: 240  # force-kill a hung run instead of letting it block forever
       template:
         spec:
           # RWO PVCs can only attach to one node at a time — co-locate with
