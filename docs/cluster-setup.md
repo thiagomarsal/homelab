@@ -561,9 +561,15 @@ spec:
 
 ## Part 4: Proxying to LXC containers outside the cluster
 
+> **Note:** Nextcloud was migrated from an LXC to an in-cluster Deployment
+> (the old LXC, pve02/CT104, was decommissioned 2026-07-18). The Nextcloud
+> example below reflects the pattern used *while* it was still an LXC —
+> useful reference for the general HTTPS-backend technique, but Nextcloud
+> itself no longer needs this. Immich is still LXC-proxied this way.
+
 ### Service + Endpoints is the correct approach
 
-The user's architecture has Immich (192.168.1.20) and Nextcloud (192.168.1.21) running as LXC containers on the LAN, not in Kubernetes. Traefik inside k3s needs to route to these IPs.
+The user's architecture has Immich (192.168.1.20) running as an LXC container on the LAN, not in Kubernetes. Traefik inside k3s needs to route to this IP. (Nextcloud used to be proxied the same way — see note above.)
 
 **ExternalName services won't work** — they require DNS hostnames, not IP addresses, and lack port mapping. The reliable approach is a **Service without a selector** paired with a manually created **Endpoints resource**. Traefik treats these identically to pod-backed services:
 
@@ -767,27 +773,37 @@ The full network path for both traffic types:
 
 ```
 EXTERNAL:
-Internet → Cloudflare DNS → Router (port 443 forward) → MetalLB VIP (192.168.1.240)
-  → Traefik (TLS termination, Let's Encrypt cert) → LXC container (192.168.1.20/21)
+Internet → Cloudflare DNS → Router (port 443 forward) → MetalLB VIP (192.168.1.61)
+  → Traefik (TLS termination, Let's Encrypt cert) → LXC container (Immich, 192.168.1.20)
 
 INTERNAL:
-LAN client → Pi-hole DNS (*.home.lan → 192.168.1.240) → MetalLB VIP
+LAN client → Pi-hole DNS (*.home.lan → 192.168.1.61) → MetalLB VIP
   → Traefik (self-signed CA cert, ipAllowList middleware) → Internal k3s services
 ```
 
-The key components and their roles:
+The key components and their roles (see `docs/architecture.md` for the current
+authoritative node/IP table — this section's example addresses below are
+illustrative of the general pattern, not necessarily exact):
 
-- **kube-vip** (192.168.1.10): Floating VIP for the k3s API server, used by agents and `kubectl`
-- **MetalLB** (192.168.1.240): Stable LoadBalancer IP for Traefik's ingress traffic
-- **cert-manager**: Two ClusterIssuers — `homelab-ca-issuer` for `.home.lan` self-signed certs, `letsencrypt-production` for `*.example.com` via Cloudflare DNS-01
+- **kube-vip** (real VIP: 192.168.1.60): Floating VIP for the k3s API server, used by agents and `kubectl`
+- **MetalLB** (real ingress IP: 192.168.1.61, pool 192.168.1.61-199): Stable LoadBalancer IP for Traefik's ingress traffic
+- **cert-manager**: Two ClusterIssuers — `homelab-ca-issuer` for `.home.lan` self-signed certs, `letsencrypt-production` for `*.tmf-solutions.com` via Cloudflare DNS-01
 - **Traefik v3**: Single instance handling both internal (with `ipAllowList`) and external (unrestricted) IngressRoutes
 - **Pi-hole/local DNS**: Resolves `.home.lan` to the MetalLB VIP for split-horizon DNS
-- **Service + Endpoints**: Maps external LXC container IPs into Kubernetes service discovery for Traefik routing
+- **Service + Endpoints**: Maps the remaining external LXC (Immich) into Kubernetes service discovery for Traefik routing
 
-This architecture replaces Nginx Proxy Manager entirely: Traefik handles all ingress routing, TLS termination, HTTP→HTTPS redirect, header injection, and proxying to both in-cluster services and external LXC containers — all managed declaratively through Kubernetes manifests with automatic certificate renewal.
+This architecture replaces Nginx Proxy Manager entirely: Traefik handles all ingress routing, TLS termination, HTTP→HTTPS redirect, header injection, and proxying to both in-cluster services and the remaining external LXC — all managed declaratively through Kubernetes manifests with automatic certificate renewal.
+
 ---
 
-## Part 5: NPM to Traefik migration plan
+## Part 5: NPM to Traefik migration plan (historical — completed)
+
+> **STATUS: DONE.** This migration was completed; NPM has been decommissioned
+> and Traefik is the sole ingress. Kept here as a historical record of how it
+> was executed, not as a pending plan. Two details below are now stale from
+> when this was written: Longhorn actually runs `numberOfReplicas: 3` (not 1 —
+> see `docs/architecture.md`), and there is no longer an on-demand pve04 (all
+> 6 pve nodes are always-on as of 2026-07-18).
 
 This section documents the phased migration from Nginx Proxy Manager (LXC) to Traefik (k3s built-in) as the single ingress point for all services.
 
@@ -841,7 +857,7 @@ This section documents the phased migration from Nginx Proxy Manager (LXC) to Tr
 
 ### Out of scope (future milestones)
 
-- Migrating Nextcloud and Immich workloads into k3s
+- Migrating Immich into k3s (Nextcloud was migrated 2026-07; this is done)
 - Pi-hole migration (DNS dependency — higher risk, separate planning)
 - GitOps with Flux or ArgoCD
 - Postgres backend for n8n
