@@ -15,7 +15,7 @@ data:
     if (!defined('ABSPATH')) { exit; }
 
     add_action('template_redirect', function () {
-        $path       = strtok($_SERVER['REQUEST_URI'], '?');
+        $path       = rtrim(strtok($_SERVER['REQUEST_URI'], '?'), '/');
         $is_request = isset($_GET['af_irrigation_admin']) || $path === '/irrigation-admin';
         if (!$is_request) { return; }
 
