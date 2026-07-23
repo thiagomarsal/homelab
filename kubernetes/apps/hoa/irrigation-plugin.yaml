@@ -1,0 +1,42 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: af-irrigation-admin-plugin
+  namespace: hoa
+data:
+  auburn-fields-irrigation-admin.php: |
+    <?php
+    /**
+     * Plugin Name: Auburn Fields — Irrigation Admin Gate
+     * Description: Serves the irrigation-zone admin tool only to logged-in users who can
+     *              edit_pages (Editors and Administrators). The HTML lives in an
+     *              Apache-denied folder, so this endpoint is the only way to reach it.
+     */
+    if (!defined('ABSPATH')) { exit; }
+
+    add_action('template_redirect', function () {
+        $path       = strtok($_SERVER['REQUEST_URI'], '?');
+        $is_request = isset($_GET['af_irrigation_admin']) || $path === '/irrigation-admin';
+        if (!$is_request) { return; }
+
+        if (!is_user_logged_in()) { auth_redirect(); exit; }
+
+        if (!current_user_can('edit_pages')) {
+            wp_die(
+                'You must be an editor or administrator to open the irrigation admin tool.',
+                'Not authorized',
+                ['response' => 403]
+            );
+        }
+
+        $file = WP_CONTENT_DIR . '/uploads/irrigation-admin/irrigation-admin.html';
+        if (!is_readable($file)) {
+            wp_die('Irrigation admin tool not found on the server.', 'Not found', ['response' => 404]);
+        }
+
+        header('Content-Type: text/html; charset=UTF-8');
+        header('X-Robots-Tag: noindex, nofollow');
+        header('Cache-Control: private, no-store');
+        readfile($file);
+        exit;
+    }, 0);

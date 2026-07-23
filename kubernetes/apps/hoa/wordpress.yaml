@@ -68,6 +68,10 @@ spec:
               mountPath: /var/www/html/wp-content/mu-plugins/auburn-fields-newsletter.php
               subPath: auburn-fields-newsletter.php
               readOnly: true
+            - name: irrigation-plugin
+              mountPath: /var/www/html/wp-content/mu-plugins/auburn-fields-irrigation-admin.php
+              subPath: auburn-fields-irrigation-admin.php
+              readOnly: true
             - name: php-uploads-ini
               mountPath: /usr/local/etc/php/conf.d/uploads.ini
               subPath: uploads.ini
@@ -91,6 +95,9 @@ spec:
         - name: newsletter-plugin
           configMap:
             name: af-newsletter-plugin
+        - name: irrigation-plugin
+          configMap:
+            name: af-irrigation-admin-plugin
         - name: php-uploads-ini
           configMap:
             name: wordpress-php-uploads
