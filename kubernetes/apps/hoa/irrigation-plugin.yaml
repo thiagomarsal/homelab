@@ -8,35 +8,163 @@ data:
     <?php
     /**
      * Plugin Name: Auburn Fields — Irrigation Admin Gate
-     * Description: Serves the irrigation-zone admin tool only to logged-in users who can
-     *              edit_pages (Editors and Administrators). The HTML lives in an
-     *              Apache-denied folder, so this endpoint is the only way to reach it.
+     * Description: Serves the irrigation admin tool, its data, and its save endpoint
+     *              to logged-in users who can edit_pages (Editors and Administrators).
+     *
+     * Three endpoints, all gated on edit_pages:
+     *   GET  /irrigation-admin       the draw tool (HTML, nonce injected)
+     *   GET  /irrigation-admin/data  the full FeatureCollection
+     *   POST /irrigation-admin/save  write the full set, plus a filtered public copy
+     *
+     * Data lives in two places on purpose:
+     *   uploads/irrigation-admin/zones.geojson  full set — Apache-denied, board only
+     *   uploads/irrigation-maps/zones.geojson   zones + light poles only — public
+     * The public copy is derived on every save, so controller and sprinkler-head
+     * positions are never served to a resident's browser.
      */
     if (!defined('ABSPATH')) { exit; }
 
-    add_action('template_redirect', function () {
-        $path       = rtrim(strtok($_SERVER['REQUEST_URI'], '?'), '/');
-        $is_request = isset($_GET['af_irrigation_admin']) || $path === '/irrigation-admin';
-        if (!$is_request) { return; }
+    const AF_IRR_NONCE  = 'af_irrigation_save';
+    const AF_IRR_MAX    = 5242880; // 5 MB
+    const AF_IRR_PUBLIC = ['controller', 'zone', 'light'];
 
-        if (!is_user_logged_in()) { auth_redirect(); exit; }
+    function af_irr_paths() {
+        $base = WP_CONTENT_DIR . '/uploads';
+        return [
+            'admin_html'  => $base . '/irrigation-admin/irrigation-admin.html',
+            'admin_data'  => $base . '/irrigation-admin/zones.geojson',
+            'public_data' => $base . '/irrigation-maps/zones.geojson',
+        ];
+    }
 
+    function af_irr_json($code, $payload) {
+        status_header($code);
+        header('Content-Type: application/json; charset=UTF-8');
+        header('Cache-Control: private, no-store');
+        echo wp_json_encode($payload);
+        exit;
+    }
+
+    /** Editors and Administrators only. Never 302 an API call to a login page. */
+    function af_irr_require_editor($as_json) {
+        if (!is_user_logged_in()) {
+            if ($as_json) { af_irr_json(401, ['ok' => false, 'error' => 'Not logged in']); }
+            auth_redirect();
+            exit;
+        }
         if (!current_user_can('edit_pages')) {
+            if ($as_json) { af_irr_json(403, ['ok' => false, 'error' => 'Not authorized']); }
             wp_die(
                 'You must be an editor or administrator to open the irrigation admin tool.',
                 'Not authorized',
                 ['response' => 403]
             );
         }
+    }
 
-        $file = WP_CONTENT_DIR . '/uploads/irrigation-admin/irrigation-admin.html';
-        if (!is_readable($file)) {
-            wp_die('Irrigation admin tool not found on the server.', 'Not found', ['response' => 404]);
+    /** Write via temp file + rename so a failed write can never truncate the live map. */
+    function af_irr_write_atomic($dest, $contents) {
+        $dir = dirname($dest);
+        if (!is_dir($dir) || !is_writable($dir)) { return 'Directory not writable: ' . $dir; }
+        if (file_exists($dest) && !@copy($dest, $dest . '.bak')) { return 'Could not write backup'; }
+        $tmp = $dest . '.tmp';
+        if (file_put_contents($tmp, $contents, LOCK_EX) === false) { return 'Write failed'; }
+        if (!@rename($tmp, $dest)) { @unlink($tmp); return 'Could not replace target'; }
+        @chmod($dest, 0644);
+        return null;
+    }
+
+    add_action('template_redirect', function () {
+        $path = rtrim(strtok($_SERVER['REQUEST_URI'], '?'), '/');
+        $p    = af_irr_paths();
+
+        // ── POST /irrigation-admin/save ──────────────────────────────────────
+        if ($path === '/irrigation-admin/save') {
+            if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
+                af_irr_json(405, ['ok' => false, 'error' => 'POST required']);
+            }
+            af_irr_require_editor(true);
+
+            $nonce = $_SERVER['HTTP_X_AF_NONCE'] ?? '';
+            if (!wp_verify_nonce($nonce, AF_IRR_NONCE)) {
+                af_irr_json(403, ['ok' => false, 'error' => 'Session expired — reload the page and save again']);
+            }
+
+            $raw = file_get_contents('php://input');
+            if ($raw === false || $raw === '') {
+                af_irr_json(400, ['ok' => false, 'error' => 'Empty body']);
+            }
+            if (strlen($raw) > AF_IRR_MAX) {
+                af_irr_json(413, ['ok' => false, 'error' => 'Payload too large']);
+            }
+
+            $gj = json_decode($raw, true);
+            if (!is_array($gj)
+                || ($gj['type'] ?? '') !== 'FeatureCollection'
+                || !isset($gj['features']) || !is_array($gj['features'])) {
+                af_irr_json(400, ['ok' => false, 'error' => 'Not a GeoJSON FeatureCollection']);
+            }
+            foreach ($gj['features'] as $f) {
+                if (!is_array($f) || !isset($f['geometry']) || !isset($f['properties'])) {
+                    af_irr_json(400, ['ok' => false, 'error' => 'A feature is missing geometry or properties']);
+                }
+            }
+
+            // Re-encode rather than storing raw input, so what lands on disk is
+            // exactly what the validator accepted.
+            $full = wp_json_encode($gj, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+            if ($err = af_irr_write_atomic($p['admin_data'], $full)) {
+                af_irr_json(500, ['ok' => false, 'error' => $err]);
+            }
+
+            $public_feats = array_values(array_filter($gj['features'], function ($f) {
+                return in_array($f['properties']['featureType'] ?? '', AF_IRR_PUBLIC, true);
+            }));
+            $public = wp_json_encode(
+                ['type' => 'FeatureCollection', 'features' => $public_feats],
+                JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES
+            );
+            if ($err = af_irr_write_atomic($p['public_data'], $public)) {
+                af_irr_json(500, ['ok' => false, 'error' => 'Saved, but public copy failed: ' . $err]);
+            }
+
+            af_irr_json(200, [
+                'ok'     => true,
+                'count'  => count($gj['features']),
+                'public' => count($public_feats),
+            ]);
         }
 
-        header('Content-Type: text/html; charset=UTF-8');
-        header('X-Robots-Tag: noindex, nofollow');
-        header('Cache-Control: private, no-store');
-        readfile($file);
-        exit;
+        // ── GET /irrigation-admin/data ───────────────────────────────────────
+        if ($path === '/irrigation-admin/data') {
+            af_irr_require_editor(true);
+            if (!is_readable($p['admin_data'])) {
+                // No data yet is a valid state, not an error.
+                af_irr_json(200, ['type' => 'FeatureCollection', 'features' => []]);
+            }
+            // WordPress has already set 404 for this unrouted path; without an
+            // explicit 200 the browser's fetch() sees !response.ok and bails.
+            status_header(200);
+            header('Content-Type: application/geo+json; charset=UTF-8');
+            header('Cache-Control: private, no-store');
+            header('X-Robots-Tag: noindex, nofollow');
+            readfile($p['admin_data']);
+            exit;
+        }
+
+        // ── GET /irrigation-admin ────────────────────────────────────────────
+        if (isset($_GET['af_irrigation_admin']) || $path === '/irrigation-admin') {
+            af_irr_require_editor(false);
+            if (!is_readable($p['admin_html'])) {
+                wp_die('Irrigation admin tool not found on the server.', 'Not found', ['response' => 404]);
+            }
+            $html = file_get_contents($p['admin_html']);
+            $html = str_replace('__AF_NONCE__', wp_create_nonce(AF_IRR_NONCE), $html);
+            status_header(200);
+            header('Content-Type: text/html; charset=UTF-8');
+            header('X-Robots-Tag: noindex, nofollow');
+            header('Cache-Control: private, no-store');
+            echo $html;
+            exit;
+        }
     }, 0);

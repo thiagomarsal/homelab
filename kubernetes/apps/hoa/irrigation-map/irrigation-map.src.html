@@ -1,0 +1,1010 @@
+<!-- Auburn Fields HOA — Irrigation Map (canonical source)
+     Build with ./build.sh — do not edit the deployed copies directly.
+     __MODE__ is replaced with "admin" or "public" at build time.
+     __AF_NONCE__ is replaced by the mu-plugin at request time (admin build only).
+
+     Feature model:  controller -> zone -> head   (+ light poles, independent)
+     Data:           uploads/irrigation-maps/zones.geojson
+     Public build:   zones + light poles only, filtered at load. -->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<!-- Subresource Integrity on every CDN asset: this page runs inside a logged-in
+     WordPress editor session, so a compromised CDN would be a session compromise. -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"
+      integrity="sha384-c6Rcwz4e4CITMbu/NBmnNS8yN2sC3cUElMEMfP3vqqKFp7GOYaaBBCqmaWBjmkjb" crossorigin="anonymous" referrerpolicy="no-referrer">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css"
+      integrity="sha384-NZLkVuBRMEeB4VeZz27WwTRvlhec30biQ8Xx7zG7JJnkvEKRg5qi6BNbEXo9ydwv" crossorigin="anonymous" referrerpolicy="no-referrer">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css"
+      integrity="sha384-pmjIAcz2bAn0xukfxADbZIb3t8oRT9Sv0rvO+BR5Csr6Dhqq+nZs59P0pPKQJkEV" crossorigin="anonymous" referrerpolicy="no-referrer">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Slab:wght@500;600;700&family=Roboto+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#1E293B; --muted:#475569; --line:#D8E0E8; --panel:#F0F5FA; --panel-2:#FFFFFF;
+    --accent:#046BD2; --accent-ink:#045CB4;
+    --active:#2F9E5B; --active-ink:#217544;
+    --flag:#E0940E; --flag-ink:#A96C08;
+    --off:#94A3B8; --off-ink:#5E6E80;
+    --danger:#D6544B; --danger-ink:#B23A32;
+    --shadow:0 6px 22px rgba(30,41,59,.16),0 1px 3px rgba(30,41,59,.10);
+    --ui:"Roboto",system-ui,-apple-system,Segoe UI,sans-serif;
+    --slab:"Roboto Slab",Georgia,serif; --mono:"Roboto Mono",ui-monospace,Menlo,monospace;
+  }
+  *{box-sizing:border-box} html,body{margin:0;height:100%}
+  body{font-family:var(--ui);color:var(--ink);background:var(--panel);overflow:hidden}
+  .app{display:grid;grid-template-columns:300px 1fr;height:100vh;height:100dvh}
+  body.mode-public .admin-only{display:none !important}
+  body.labels-hidden .leaflet-tooltip.zone-label{display:none}
+  /* with Labels off, hovering a feature still reveals its permanent label */
+  body.labels-hidden .leaflet-tooltip.zone-label.force-show{display:block !important}
+
+  /* ── rail ─────────────────────────────────────────────────────────────── */
+  .rail{background:var(--panel-2);border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0;z-index:1000}
+  .rail .cap{font-family:var(--slab);font-weight:600;font-size:14px;padding:14px 16px 10px;border-bottom:1px solid var(--line)}
+  .rail .cap small{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.13em;text-transform:uppercase;color:var(--muted);margin-top:3px}
+  .rail .scroll{flex:1;overflow:auto;min-height:0}
+  .rail h2{font-family:var(--slab);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:600;margin:0;padding:14px 16px 6px}
+  .rail-foot{padding:9px 16px;border-top:1px solid var(--line);font-family:var(--mono);font-size:11px;color:var(--muted);display:flex;align-items:center;gap:8px}
+  .rail-foot .warn{color:var(--flag-ink);font-weight:700}
+
+  .panel{padding:0 12px 4px}
+  .row{display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--line);border-radius:9px;margin:5px 0;
+       cursor:pointer;background:#fff;transition:.12s;user-select:none}
+  .row:hover{background:var(--panel)} .row.dim{opacity:.4}
+  .row .label{font-weight:500;font-size:13px;flex:1} .row .count{font-family:var(--mono);font-size:13px;color:var(--muted)}
+  .row .eye{width:16px;height:16px;stroke:var(--muted);fill:none;stroke-width:2;flex:none}
+  .swatch{width:15px;height:15px;border-radius:4px;flex:none;border:2px solid rgba(0,0,0,.12)}
+  .swatch.round{border-radius:50%}
+  .sw-active{background:var(--active)} .sw-flagged{background:var(--flag)} .sw-off{background:var(--off)}
+
+  /* ── tree ─────────────────────────────────────────────────────────────── */
+  .tree{padding:2px 12px 16px}
+  .tnode{border-radius:9px}
+  .tctrl{display:flex;align-items:center;gap:9px;padding:8px 8px;border-radius:9px;cursor:pointer}
+  .tctrl:hover{background:var(--panel)}
+  .tctrl .caret{width:12px;height:12px;stroke:var(--muted);fill:none;stroke-width:2.5;flex:none;transition:transform .15s}
+  .tnode.open .tctrl .caret{transform:rotate(90deg)}
+  .tctrl .sq{width:13px;height:13px;border-radius:3px;flex:none;border:1.5px solid rgba(0,0,0,.15)}
+  .tctrl .nm{font-size:13px;font-weight:500;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tctrl .sub{font-family:var(--mono);font-size:10.5px;color:var(--muted);flex:none}
+  .tkids{display:none;padding:0 0 6px 20px} .tnode.open .tkids{display:block}
+  .tkid{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:8px;cursor:pointer}
+  .tkid:hover{background:var(--panel)}
+  .tkid .chip{width:10px;height:10px;border-radius:3px;flex:none}
+  .tkid .tag{font-family:var(--mono);font-weight:700;font-size:10.5px;background:var(--panel);border:1px solid var(--line);border-radius:5px;padding:1px 5px;flex:none}
+  .tkid .nm{font-size:12.5px;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tkid .sub{font-family:var(--mono);font-size:10px;color:var(--muted);flex:none}
+  .badge{font-family:var(--mono);font-size:9.5px;text-transform:uppercase;letter-spacing:.06em;padding:2px 6px;border-radius:5px;flex:none}
+  .badge.active{color:var(--active-ink);background:#E3F4EA}
+  .badge.flagged{color:var(--flag-ink);background:#FBEFD5}
+  .badge.off{color:var(--off-ink);background:#EDF1F4}
+  .empty{font-size:12px;color:var(--muted);padding:6px 10px;font-style:italic}
+  .unassigned-note{margin:6px 12px;padding:8px 10px;border-radius:8px;background:#FBEFD5;color:var(--flag-ink);
+       font-size:12px;font-weight:500;cursor:pointer;display:none}
+  .unassigned-note.show{display:block}
+
+  /* ── map ──────────────────────────────────────────────────────────────── */
+  #map{height:100%;width:100%;background:#0c1116} .leaflet-container{font-family:var(--ui)}
+  .af-ico{background:none;border:none}
+
+  .leaflet-tooltip.zone-label{background:var(--ink);color:#fff;border:none;border-radius:7px;box-shadow:var(--shadow);
+      font-family:var(--mono);font-weight:700;font-size:12px;letter-spacing:.02em;padding:3px 8px;white-space:nowrap;
+      max-width:160px;overflow:hidden;text-overflow:ellipsis}
+  .leaflet-tooltip.zone-label::before{display:none}
+  .leaflet-tooltip.hover-label{background:rgba(30,41,59,.92);color:#fff;border:none;border-radius:6px;
+      font-family:var(--mono);font-size:11px;font-weight:500;padding:2px 7px;box-shadow:var(--shadow)}
+  .leaflet-tooltip.hover-label::before{display:none}
+
+  .af-cluster{background:none;border:none}
+  .af-cluster div{border-radius:50%;display:flex;align-items:center;justify-content:center;
+      font-family:var(--mono);font-weight:700;color:#fff;border:2.5px solid rgba(255,255,255,.9);
+      box-shadow:0 2px 8px rgba(0,0,0,.35);text-shadow:0 1px 2px rgba(0,0,0,.4)}
+
+  /* ── floating controls ────────────────────────────────────────────────── */
+  .mapctl{display:flex;flex-direction:column;gap:6px}
+  .mapctl button{font-family:var(--ui);font-size:12.5px;font-weight:500;color:var(--ink);background:#fff;border:1px solid var(--line);
+      border-radius:8px;padding:7px 11px;cursor:pointer;display:inline-flex;align-items:center;gap:7px;white-space:nowrap;box-shadow:var(--shadow)}
+  .mapctl button:hover{background:#E3EEFB;border-color:var(--accent)}
+  .mapctl button.on{background:var(--accent);color:#fff;border-color:transparent}
+  .mapctl button.dirty{background:var(--flag);color:#fff;border-color:transparent}
+  .mapctl button:disabled{opacity:.5;cursor:default}
+  .mapctl button svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2;flex:none}
+  .leaflet-control-layers{border-radius:10px !important;box-shadow:var(--shadow) !important;border:1px solid var(--line) !important}
+
+  /* ── popup ────────────────────────────────────────────────────────────── */
+  .leaflet-popup-content-wrapper{border-radius:12px;box-shadow:var(--shadow)}
+  .leaflet-popup-content{margin:14px 16px;min-width:215px}
+  .pop .htop{display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap}
+  .pop h3{font-family:var(--slab);font-size:15.5px;margin:0;font-weight:600;flex:1}
+  .pop .ptag{font-family:var(--mono);font-weight:700;font-size:11.5px;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:2px 7px}
+  .pop .kind{font-family:var(--mono);font-size:9.5px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);
+      width:100%;margin-bottom:-2px}
+  .pop dl{display:grid;grid-template-columns:auto 1fr;gap:3px 12px;margin:0;font-size:12.5px}
+  .pop dt{color:var(--muted)} .pop dd{margin:0;font-family:var(--mono)}
+  .pop .note{font-size:12px;color:var(--muted);margin:8px 0 0;line-height:1.45}
+  .pop .pbtns{display:flex;flex-wrap:wrap;gap:6px;margin-top:11px;padding-top:10px;border-top:1px solid var(--line)}
+  .pop .pbtns button{font-family:var(--ui);font-size:12px;font-weight:500;border:1px solid var(--line);background:#fff;
+      border-radius:7px;padding:6px 9px;cursor:pointer;color:var(--ink)}
+  .pop .pbtns button:hover{border-color:var(--accent);color:var(--accent-ink)}
+  .pop .pbtns .danger:hover{border-color:var(--danger);color:var(--danger-ink)}
+  .pop select{font-family:var(--ui);font-size:12px;padding:5px 7px;border:1px solid var(--line);border-radius:7px;width:100%;margin-top:8px}
+
+  /* ── banners / toast ──────────────────────────────────────────────────── */
+  .toast{position:absolute;left:50%;bottom:22px;transform:translateX(-50%) translateY(20px);background:var(--ink);color:#fff;
+      padding:10px 16px;border-radius:10px;font-size:13px;box-shadow:var(--shadow);opacity:0;pointer-events:none;transition:.25s;z-index:1400;max-width:80%}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  .banner{position:absolute;top:12px;left:50%;transform:translateX(-50%);z-index:1100;color:#fff;font-size:12.5px;font-weight:500;
+      padding:7px 15px;border-radius:20px;box-shadow:var(--shadow);display:none;white-space:nowrap}
+  .banner.edit{background:var(--flag)} .banner.point{background:var(--accent)}
+  body.editing .banner.edit{display:block}
+  body.placing-head .banner.point,body.placing-box .banner.point,body.placing-light .banner.point{display:block}
+  body.placing-head .banner.edit,body.placing-box .banner.edit,body.placing-light .banner.edit{display:none}
+  body.placing-head .leaflet-container,body.placing-box .leaflet-container,body.placing-light .leaflet-container{cursor:crosshair !important}
+  input[type=file]{display:none}
+
+  @media (max-width:860px){
+    .app{grid-template-columns:1fr}
+    .rail{position:absolute;inset:0 auto 0 0;width:288px;transform:translateX(-100%);transition:transform .22s;box-shadow:var(--shadow)}
+    .rail.open{transform:none}
+  }
+</style>
+
+<div class="app">
+  <aside class="rail" id="rail">
+    <div class="cap">Irrigation Map<small id="subLabel">Community Map</small></div>
+    <div class="scroll">
+      <h2>Layers</h2>
+      <div class="panel" id="layerPanel"></div>
+      <h2>Status</h2>
+      <div class="panel" id="statusPanel"></div>
+      <div class="unassigned-note" id="unassignedNote"></div>
+      <h2 id="treeHead">Zones</h2>
+      <div class="tree" id="tree"></div>
+    </div>
+    <div class="rail-foot" id="railFoot">—</div>
+  </aside>
+  <div style="position:relative;min-height:0">
+    <div id="map"></div>
+    <div class="banner edit">Edit mode — draw a zone boundary. Click any item to manage it.</div>
+    <div class="banner point" id="pointBanner">Placing — click to drop. <b>Ctrl+Z</b> undo · <b>Esc</b> to stop.</div>
+    <div class="toast" id="toast"></div>
+    <input type="file" id="fileInput" accept=".geojson,.json,application/geo+json,application/json">
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"
+        integrity="sha384-NElt3Op+9NBMCYaef5HxeJmU4Xeard/Lku8ek6hoPTvYkQPh3zLIrJP7KiRocsxO" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"
+        integrity="sha384-JP5UPxIO2Tm2o79Fb0tGYMa44jkWar53aBoCbd8ah0+LcCDoohTIYr+zIXyfGIJN" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js"
+        integrity="sha384-eXVCORTRlv4FUUgS/xmOyr66XBVraen8ATNLMESp92FKXLAMiKkerixTiBvXriZr" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script>
+"use strict";
+
+/* ═══ config ═══════════════════════════════════════════════════════════════ */
+const MODE        = "__MODE__";
+const IS_ADMIN    = MODE === "admin";
+const NONCE       = "__AF_NONCE__";
+const SAVE_URL    = "/irrigation-admin/save";
+/* Admin reads the full set through a capability-gated endpoint; the public file
+   holds only zones and light poles, derived server-side on every save. */
+const DATA_URL    = IS_ADMIN ? "/irrigation-admin/data"
+                             : "/wp-content/uploads/irrigation-maps/zones.geojson";
+const CENTER      = [40.5388, -111.8733];
+const START_ZOOM  = 17;
+
+/* 16 slots. First 12 are unchanged from the previous build so existing
+   controller colors stay put; the last 4 exist so controller 13+ gets a
+   distinct color instead of wrapping back onto controller 1. */
+const ZONE_COLORS = ['#FFD600','#F44336','#2196F3','#4CAF50','#FF9800','#E91E63',
+                     '#00BCD4','#FF5722','#9C27B0','#009688','#8BC34A','#3F51B5',
+                     '#795548','#C0CA33','#546E7A','#AD1457'];
+const LIGHT_COLOR      = '#FDD835';
+const UNASSIGNED_COLOR = '#94A3B8';
+
+const TYPE_META = {
+  controller:{label:"Controllers",     plural:"controllers", prefix:"C"},
+  zone:      {label:"Zones",           plural:"zones",       prefix:"Z"},
+  head:      {label:"Sprinkler heads", plural:"heads",       prefix:"H"},
+  light:     {label:"Light poles",     plural:"lights",      prefix:"L"}
+};
+/* Residents see the physical things they might actually need to look up or report:
+   control boxes, zone areas, light poles. Sprinkler heads stay board-only —
+   several hundred pins is noise to a resident, not information. */
+const PUBLIC_TYPES  = ["controller","zone","light"];
+const VISIBLE_TYPES = IS_ADMIN ? ["controller","zone","head","light"] : PUBLIC_TYPES;
+const STATUS = {active:{label:"Active"},flagged:{label:"Flagged"},off:{label:"Off"}};
+const STATUS_ORDER = ["active","flagged","off"];
+
+/* ═══ state ════════════════════════════════════════════════════════════════ */
+let DATA = {type:"FeatureCollection",features:[]};
+const layersOn  = {controller:true,zone:true,head:true,light:true};
+const statusOn  = {active:true,flagged:true,off:true};
+const openNodes = new Set();
+let editMode=false, labelsOn=false, dirty=false;
+let placedStack=[];
+
+document.body.classList.add("mode-"+MODE, "labels-hidden");
+document.getElementById("subLabel").textContent = IS_ADMIN ? "Board Admin" : "Community Map";
+document.getElementById("treeHead").textContent = IS_ADMIN ? "Controllers" : "Zones";
+
+/* ═══ helpers ══════════════════════════════════════════════════════════════ */
+const esc = s => String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const typeOf   = f => f.properties.featureType || "zone";
+const featuresOf = t => DATA.features.filter(f => typeOf(f) === t);
+const byId     = id => DATA.features.find(f => f.properties.id === id) || null;
+const labelText= f => (f.properties.tag||"").trim() || f.properties.name || f.properties.id;
+
+function colorOf(f){
+  const p = f.properties;
+  if (typeOf(f) === "light") return LIGHT_COLOR;
+  if (typeOf(f) === "head"){
+    const z = p.zoneId ? byId(p.zoneId) : null;
+    return z ? ZONE_COLORS[(z.properties.colorIdx||0) % ZONE_COLORS.length] : UNASSIGNED_COLOR;
+  }
+  return ZONE_COLORS[(p.colorIdx||0) % ZONE_COLORS.length];
+}
+/* colorIdx lives in the data, not in array position — deleting a feature must
+   never silently recolor everything after it. */
+function nextColorIdx(){
+  const used = DATA.features
+    .filter(f => ["controller","zone"].includes(typeOf(f)))
+    .map(f => f.properties.colorIdx)
+    .filter(n => typeof n === "number");
+  return used.length ? (Math.max(...used) + 1) % ZONE_COLORS.length : 0;
+}
+function nextId(type){
+  const pre = TYPE_META[type].prefix, used = new Set(DATA.features.map(f=>f.properties.id));
+  let n = featuresOf(type).length + 1;
+  while (used.has(pre + n)) n++;
+  return pre + n;
+}
+function nextTag(type){
+  const nums = featuresOf(type)
+    .map(f => { const m = String(f.properties.tag||"").match(/(\d+)\s*$/); return m ? +m[1] : 0; });
+  return TYPE_META[type].prefix + "-" + ((nums.length ? Math.max(...nums) : 0) + 1);
+}
+function labelInk(hex){
+  const r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16);
+  return (0.299*r + 0.587*g + 0.114*b) > 140 ? '#1E293B' : '#fff';
+}
+
+/* ray-casting point-in-polygon, lng/lat order */
+function inRing(lng, lat, ring){
+  let inside = false;
+  for (let i=0, j=ring.length-1; i<ring.length; j=i++){
+    const xi=ring[i][0], yi=ring[i][1], xj=ring[j][0], yj=ring[j][1];
+    if ((yi > lat) !== (yj > lat) && lng < ((xj-xi)*(lat-yi))/(yj-yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+function inFeature(lng, lat, geom){
+  if (!geom) return false;
+  if (geom.type === "Polygon")      return inRing(lng, lat, geom.coordinates[0]);
+  if (geom.type === "MultiPolygon") return geom.coordinates.some(p => inRing(lng, lat, p[0]));
+  return false;
+}
+function zoneAt(lng, lat){
+  return featuresOf("zone").find(z => inFeature(lng, lat, z.geometry)) || null;
+}
+
+/* ═══ icons ════════════════════════════════════════════════════════════════ */
+/* Shape carries type; color carries identity. A controller and a zone can share
+   a palette color and stay distinguishable because one is a box, one is an area. */
+function controllerIcon(c){
+  const svg =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="34" height="34" viewBox="0 0 34 34">'+
+    '<rect x="2.5" y="2.5" width="29" height="29" rx="7" fill="'+c+'" stroke="#fff" stroke-width="2.5"/>'+
+    '<g fill="#fff"><rect x="10" y="10" width="5.5" height="5.5" rx="1.2"/><rect x="18.5" y="10" width="5.5" height="5.5" rx="1.2"/>'+
+    '<rect x="10" y="18.5" width="5.5" height="5.5" rx="1.2"/><rect x="18.5" y="18.5" width="5.5" height="5.5" rx="1.2"/></g></svg>';
+  return L.divIcon({className:'af-ico',html:svg,iconSize:[34,34],iconAnchor:[17,17],popupAnchor:[0,-18]});
+}
+function headIcon(c, unassigned){
+  const dash = unassigned ? ' stroke-dasharray="2.2 1.8"' : '';
+  const svg =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 13 13">'+
+    '<circle cx="6.5" cy="6.5" r="4.4" fill="'+c+'" stroke="#fff" stroke-width="2"'+dash+'/></svg>';
+  return L.divIcon({className:'af-ico',html:svg,iconSize:[13,13],iconAnchor:[6.5,6.5],popupAnchor:[0,-7]});
+}
+function lightIcon(){
+  const rays = 'M13 1.6v3.2M13 21.2v3.2M1.6 13h3.2M21.2 13h3.2M4.9 4.9l2.3 2.3M18.8 18.8l2.3 2.3M21.1 4.9l-2.3 2.3M7.2 18.8l-2.3 2.3';
+  const svg =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 26 26">'+
+    '<g stroke="#fff" stroke-width="4.5" stroke-linecap="round" opacity=".85"><path d="'+rays+'"/></g>'+
+    '<g stroke="'+LIGHT_COLOR+'" stroke-width="2.4" stroke-linecap="round"><path d="'+rays+'"/></g>'+
+    '<circle cx="13" cy="13" r="6" fill="'+LIGHT_COLOR+'" stroke="#fff" stroke-width="2"/></svg>';
+  return L.divIcon({className:'af-ico',html:svg,iconSize:[26,26],iconAnchor:[13,13],popupAnchor:[0,-14]});
+}
+
+/* ═══ map + layers ═════════════════════════════════════════════════════════ */
+const map = L.map("map",{zoomControl:true, preferCanvas:true}).setView(CENTER, START_ZOOM);
+const sat = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+  {maxZoom:21, attribution:"Imagery © Esri, Maxar, Earthstar Geographics"}).addTo(map);
+const streets = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+  {maxZoom:19, attribution:"© OpenStreetMap contributors"});
+L.control.layers({"Satellite":sat,"Streets":streets}, null, {position:"topright"}).addTo(map);
+
+const canvasRenderer = L.canvas({padding:0.4});
+const groups = {
+  zone:       L.layerGroup().addTo(map),
+  controller: L.layerGroup().addTo(map),
+  light:      L.layerGroup().addTo(map),
+  head:       null   /* cluster group, built below */
+};
+
+/* Cluster bubble takes the dominant zone color of its children, so density and
+   zone identity read at the same time without zooming in. */
+groups.head = L.markerClusterGroup({
+  chunkedLoading:true,
+  disableClusteringAtZoom:19,
+  maxClusterRadius:55,
+  spiderfyOnMaxZoom:false,
+  showCoverageOnHover:false,
+  iconCreateFunction: cluster => {
+    const tally = {};
+    cluster.getAllChildMarkers().forEach(m => {
+      const c = m.options.afColor || UNASSIGNED_COLOR; tally[c] = (tally[c]||0) + 1;
+    });
+    const dom = Object.keys(tally).sort((a,b)=>tally[b]-tally[a])[0] || UNASSIGNED_COLOR;
+    const n = cluster.getChildCount();
+    const size = n < 10 ? 32 : n < 100 ? 38 : 45;
+    const html = '<div style="width:'+size+'px;height:'+size+'px;background:'+dom+';font-size:'+
+                 (n<100?13:12)+'px;color:'+labelInk(dom)+';text-shadow:none">'+n+'</div>';
+    return L.divIcon({html:html, className:'af-cluster', iconSize:[size,size]});
+  }
+});
+if (IS_ADMIN) groups.head.addTo(map);
+
+const layerById = {};
+
+/* ═══ toolbar ══════════════════════════════════════════════════════════════ */
+const Toolbar = L.Control.extend({onAdd:function(){
+  const d = L.DomUtil.create("div","mapctl");
+  let html = '<button id="labelsBtn" title="Show/hide labels"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h10M4 17h7"/></svg>Labels</button>';
+  if (IS_ADMIN) html +=
+    '<button id="editBtn" class="admin-only" title="Draw zone boundaries"><svg viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>Zone</button>'+
+    '<button id="boxBtn" class="admin-only" title="Place control boxes"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M9 9h2v2H9zM13 9h2v2h-2zM9 13h2v2H9zM13 13h2v2h-2z"/></svg>Box</button>'+
+    '<button id="lightBtn" class="admin-only" title="Place light poles"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1"/></svg>Light</button>'+
+    '<button id="placeBtn" class="admin-only" title="Rapid-place sprinkler heads"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>Heads</button>'+
+    '<button id="saveBtn" class="admin-only" title="Save to server" disabled><svg viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>Save</button>'+
+    '<button id="importBtn" class="admin-only" title="Import GeoJSON"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0-4-4m4 4 4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>Import</button>'+
+    '<button id="exportBtn" class="admin-only" title="Download zones.geojson"><svg viewBox="0 0 24 24"><path d="M12 21V9m0 0-4 4m4-4 4 4M4 7V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v2"/></svg>Export</button>';
+  d.innerHTML = html;
+  L.DomEvent.disableClickPropagation(d); L.DomEvent.disableScrollPropagation(d);
+  return d;
+}});
+new Toolbar({position:"topright"}).addTo(map);
+
+const RailBtn = L.Control.extend({onAdd:function(){
+  const d = L.DomUtil.create("div","mapctl");
+  d.innerHTML = '<button id="railToggle" title="Panel"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>';
+  d.style.display = window.innerWidth <= 860 ? "block" : "none";
+  L.DomEvent.disableClickPropagation(d); return d;
+}});
+new RailBtn({position:"topleft"}).addTo(map);
+
+/* ═══ render ═══════════════════════════════════════════════════════════════ */
+function shown(f){
+  return layersOn[typeOf(f)] && statusOn[f.properties.status || "active"];
+}
+
+function render(){
+  Object.values(groups).forEach(g => g && g.clearLayers());
+  for (const k in layerById) delete layerById[k];
+
+  const headMarkers = [];
+  DATA.features.forEach(f => {
+    if (!shown(f)) return;
+    const t = typeOf(f), c = colorOf(f), p = f.properties;
+    let layer;
+
+    if (t === "zone"){
+      const s = p.status || "active";
+      layer = L.geoJSON(f, {renderer:canvasRenderer, style:()=>({
+        color:c, weight:2.5, opacity:1, fillColor:c,
+        fillOpacity: s==="off" ? 0.08 : 0.25,
+        dashArray:  s==="flagged" ? "6 5" : null
+      })});
+      if (f.geometry && f.geometry.type !== "Point"){
+        layer.bindTooltip((s==="flagged"?"⚑ ":"") + esc(labelText(f)),
+          {permanent:true, direction:"center", className:"zone-label", opacity:1});
+      }
+    } else {
+      const ll = [f.geometry.coordinates[1], f.geometry.coordinates[0]];
+      const icon = t === "controller" ? controllerIcon(c)
+                 : t === "light"      ? lightIcon()
+                 : headIcon(c, !p.zoneId);
+      const mk = L.marker(ll, {icon:icon, afColor:c});
+      /* heads are numerous (dozens-hundreds) — hover-only, exempt from the
+         Labels toggle. controllers and lights are few, like zones, so they
+         get permanent labels the toggle can hide. */
+      if (t === "head"){
+        mk.bindTooltip(esc(labelText(f)), {direction:"top", className:"hover-label", offset:[0,-8]});
+      } else {
+        mk.bindTooltip(esc(labelText(f)), {permanent:true, direction:"top",
+          className:"zone-label", offset:[0,-14], opacity:1});
+      }
+      layer = mk;
+    }
+
+    layer.bindPopup(() => popupHtml(f), {closeButton:true, maxWidth:300});
+    /* permanent labels (everything but heads) stay reachable on hover even
+       with Labels off — CSS hides them by default, this class overrides it */
+    layer.on("mouseover", () => {
+      const el = layer.getTooltip && layer.getTooltip() && layer.getTooltip().getElement();
+      if (el) el.classList.add("force-show");
+    });
+    layer.on("mouseout", () => {
+      const el = layer.getTooltip && layer.getTooltip() && layer.getTooltip().getElement();
+      if (el) el.classList.remove("force-show");
+    });
+    layerById[p.id] = layer;
+
+    if (t === "head") headMarkers.push(layer);
+    else groups[t].addLayer(layer);
+  });
+
+  if (headMarkers.length) groups.head.addLayers(headMarkers);
+
+  /* zone label colors are per-feature, so they are painted after the tooltip
+     element exists rather than through a status class */
+  DATA.features.forEach(f => {
+    if (typeOf(f) !== "zone" || !layerById[f.properties.id]) return;
+    const el = layerById[f.properties.id].getTooltip && layerById[f.properties.id].getTooltip();
+    const dom = el && el.getElement && el.getElement();
+    if (dom){ const c = colorOf(f); dom.style.background = c; dom.style.color = labelInk(c); }
+  });
+  DATA.features.forEach(f => {
+    if (typeOf(f) !== "controller" || !layerById[f.properties.id]) return;
+    const tt = layerById[f.properties.id].getTooltip && layerById[f.properties.id].getTooltip();
+    const dom = tt && tt.getElement && tt.getElement();
+    if (dom){ const c = colorOf(f); dom.style.background = c; dom.style.color = labelInk(c); }
+  });
+
+  renderLayers(); renderStatus(); renderTree(); renderFoot();
+}
+
+function renderLayers(){
+  document.getElementById("layerPanel").innerHTML = VISIBLE_TYPES.map(t => {
+    const n = featuresOf(t).length;
+    const sw = t === "light"      ? '<span class="swatch round" style="background:'+LIGHT_COLOR+'"></span>'
+             : t === "head"       ? '<span class="swatch round" style="background:linear-gradient(135deg,#2196F3,#4CAF50)"></span>'
+             : t === "controller" ? '<span class="swatch" style="background:linear-gradient(135deg,#FFD600,#F44336)"></span>'
+             :                      '<span class="swatch" style="background:linear-gradient(135deg,#4CAF50,#3F51B5);opacity:.75"></span>';
+    return '<div class="row '+(layersOn[t]?'':'dim')+'" data-layer="'+t+'" role="button" tabindex="0">'+
+      sw + '<span class="label">'+TYPE_META[t].label+'</span><span class="count">'+String(n).padStart(2,"0")+'</span>'+
+      eyeSvg(layersOn[t]) + '</div>';
+  }).join("");
+  document.querySelectorAll('#layerPanel .row').forEach(r => {
+    const t = r.dataset.layer;
+    const go = () => { layersOn[t] = !layersOn[t]; render(); };
+    r.onclick = go;
+    r.onkeydown = e => { if (e.key==="Enter"||e.key===" "){ e.preventDefault(); go(); } };
+  });
+}
+
+function renderStatus(){
+  const counts = {active:0,flagged:0,off:0};
+  DATA.features.forEach(f => {
+    if (!VISIBLE_TYPES.includes(typeOf(f))) return;
+    counts[f.properties.status || "active"]++;
+  });
+  document.getElementById("statusPanel").innerHTML = STATUS_ORDER.map(s =>
+    '<div class="row '+(statusOn[s]?'':'dim')+'" data-status="'+s+'" role="button" tabindex="0">'+
+    '<span class="swatch sw-'+s+'"></span><span class="label">'+STATUS[s].label+'</span>'+
+    '<span class="count">'+String(counts[s]).padStart(2,"0")+'</span>'+ eyeSvg(statusOn[s]) +'</div>').join("");
+  document.querySelectorAll('#statusPanel .row').forEach(r => {
+    const s = r.dataset.status;
+    const go = () => { statusOn[s] = !statusOn[s]; render(); };
+    r.onclick = go;
+    r.onkeydown = e => { if (e.key==="Enter"||e.key===" "){ e.preventDefault(); go(); } };
+  });
+}
+
+function eyeSvg(on){
+  return '<svg class="eye" viewBox="0 0 24 24">' + (on
+    ? '<path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/>'
+    : '<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20C5 20 1 12 1 12a18.5 18.5 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19M1 1l22 22"/>') + '</svg>';
+}
+
+/* Heads are never listed individually — several hundred rows is not a browsable
+   list. Counts roll up to the zone; you find a head by clicking it on the map. */
+function renderTree(){
+  const el = document.getElementById("tree");
+  const headsIn = z => featuresOf("head").filter(h => h.properties.zoneId === z.properties.id).length;
+  const zoneRow = z => {
+    const p = z.properties;
+    return '<div class="tkid" data-id="'+p.id+'"><span class="chip" style="background:'+colorOf(z)+'"></span>'+
+      '<span class="tag">'+esc(p.tag||p.id)+'</span><span class="nm">'+esc(p.name||"")+'</span>'+
+      (IS_ADMIN ? '<span class="sub">'+headsIn(z)+'</span>' : '') +
+      '<span class="badge '+(p.status||"active")+'">'+(p.status||"active")+'</span></div>';
+  };
+
+  if (!IS_ADMIN){
+    const zones = featuresOf("zone").sort((a,b)=>labelText(a).localeCompare(labelText(b),undefined,{numeric:true}));
+    el.innerHTML = zones.length ? zones.map(zoneRow).join("")
+                                : '<div class="empty">No zones drawn yet.</div>';
+    bindTreeClicks(); return;
+  }
+
+  const controllers = featuresOf("controller")
+    .sort((a,b)=>labelText(a).localeCompare(labelText(b),undefined,{numeric:true}));
+  const zones = featuresOf("zone");
+
+  let html = controllers.map(c => {
+    const p = c.properties;
+    const kids = zones.filter(z => z.properties.controllerId === p.id)
+                      .sort((a,b)=>labelText(a).localeCompare(labelText(b),undefined,{numeric:true}));
+    const open = openNodes.has(p.id) ? " open" : "";
+    return '<div class="tnode'+open+'" data-node="'+p.id+'">'+
+      '<div class="tctrl" data-toggle="'+p.id+'">'+
+        '<svg class="caret" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>'+
+        '<span class="sq" style="background:'+colorOf(c)+'"></span>'+
+        '<span class="nm">'+esc(p.tag||p.id)+' · '+esc(p.name||"")+'</span>'+
+        '<span class="sub">'+kids.length+'</span></div>'+
+      '<div class="tkids">'+
+        (kids.length ? kids.map(zoneRow).join("") : '<div class="empty">No zones assigned.</div>')+
+      '</div></div>';
+  }).join("");
+
+  const orphans = zones.filter(z => !z.properties.controllerId || !byId(z.properties.controllerId));
+  if (orphans.length){
+    html += '<div class="tnode open" data-node="__orphan"><div class="tctrl">'+
+      '<svg class="caret" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>'+
+      '<span class="sq" style="background:'+UNASSIGNED_COLOR+'"></span>'+
+      '<span class="nm">Unassigned zones</span><span class="sub">'+orphans.length+'</span></div>'+
+      '<div class="tkids">'+orphans.map(zoneRow).join("")+'</div></div>';
+  }
+  if (!controllers.length && !zones.length) html = '<div class="empty">Nothing on the map yet.</div>';
+
+  el.innerHTML = html;
+  document.querySelectorAll('#tree .tctrl[data-toggle]').forEach(t => {
+    t.onclick = () => {
+      const id = t.dataset.toggle;
+      if (openNodes.has(id)) openNodes.delete(id); else openNodes.add(id);
+      t.parentElement.classList.toggle("open");
+    };
+  });
+  bindTreeClicks();
+}
+function bindTreeClicks(){
+  document.querySelectorAll('#tree .tkid').forEach(r => r.onclick = () => selectFeature(r.dataset.id));
+}
+
+function renderFoot(){
+  const parts = VISIBLE_TYPES
+    .map(t => { const n = featuresOf(t).length; return n ? n + " " + TYPE_META[t].plural : null; })
+    .filter(Boolean);
+  const foot = document.getElementById("railFoot");
+  foot.innerHTML = (parts.join(" · ") || "empty") + (dirty ? ' <span class="warn">• unsaved</span>' : '');
+
+  const un = featuresOf("head").filter(h => !h.properties.zoneId).length;
+  const note = document.getElementById("unassignedNote");
+  note.classList.toggle("show", IS_ADMIN && un > 0);
+  if (un) note.textContent = un + " head" + (un>1?"s":"") + " outside every zone — click to zoom to the first";
+  note.onclick = () => {
+    const first = featuresOf("head").find(h => !h.properties.zoneId);
+    if (first) selectFeature(first.properties.id);
+  };
+}
+
+function selectFeature(id){
+  const f = byId(id); if (!f) return;
+  const t = typeOf(f);
+  if (!layersOn[t]) { layersOn[t] = true; render(); }
+  const s = f.properties.status || "active";
+  if (!statusOn[s]) { statusOn[s] = true; render(); }
+  const lyr = layerById[id]; if (!lyr) return;
+
+  if (f.geometry && f.geometry.type === "Point"){
+    const [lng,lat] = f.geometry.coordinates;
+    map.flyTo([lat,lng], Math.max(map.getZoom(), 19));
+    /* a clustered head has no popup until the cluster splits */
+    if (t === "head") groups.head.zoomToShowLayer(lyr, () => lyr.openPopup());
+    else lyr.openPopup();
+  } else {
+    map.fitBounds(lyr.getBounds().pad(0.5), {maxZoom:20});
+    lyr.openPopup();
+  }
+  if (window.innerWidth <= 860) document.getElementById("rail").classList.remove("open");
+}
+
+/* ═══ popup ════════════════════════════════════════════════════════════════ */
+function popupHtml(f){
+  const p = f.properties, t = typeOf(f), s = p.status || "active";
+  const row = (k,v) => v ? '<dt>'+k+'</dt><dd>'+esc(String(v))+'</dd>' : '';
+  let dl = '';
+
+  if (t === "controller"){
+    const zs = featuresOf("zone").filter(z => z.properties.controllerId === p.id);
+    const hs = featuresOf("head").filter(h => { const z = h.properties.zoneId && byId(h.properties.zoneId);
+      return z && z.properties.controllerId === p.id; });
+    dl = row("Make", p.make) + (IS_ADMIN ? row("Zones", zs.length) + row("Heads", hs.length) : '');
+  } else if (t === "zone"){
+    const c = p.controllerId ? byId(p.controllerId) : null;
+    const hs = featuresOf("head").filter(h => h.properties.zoneId === p.id).length;
+    dl = (IS_ADMIN ? row("Controller", c ? (c.properties.tag||c.properties.id) : "— unassigned") : '')
+       + row("Valve", p.valve) + row("Flow", p.gpm && p.gpm+" gpm") + row("Schedule", p.schedule)
+       + (IS_ADMIN ? row("Heads", hs) : '');
+  } else if (t === "head"){
+    const z = p.zoneId ? byId(p.zoneId) : null;
+    dl = row("Zone", z ? (z.properties.tag||z.properties.id) : "— outside every zone") + row("Type", p.headType);
+  } else if (t === "light"){
+    dl = row("Lamp", p.lampType);
+  }
+
+  let btns = '';
+  if (IS_ADMIN){
+    let extra = '';
+    if (t === "zone"){
+      const opts = featuresOf("controller")
+        .sort((a,b)=>labelText(a).localeCompare(labelText(b),undefined,{numeric:true}))
+        .map(c => '<option value="'+c.properties.id+'"'+(p.controllerId===c.properties.id?' selected':'')+'>'+
+                  esc((c.properties.tag||c.properties.id)+' · '+(c.properties.name||''))+'</option>').join("");
+      extra = '<select onchange="assignController(\''+p.id+'\',this.value)">'+
+              '<option value="">— no controller —</option>'+opts+'</select>';
+    }
+    if (t === "head"){
+      const opts = featuresOf("zone")
+        .sort((a,b)=>labelText(a).localeCompare(labelText(b),undefined,{numeric:true}))
+        .map(z => '<option value="'+z.properties.id+'"'+(p.zoneId===z.properties.id?' selected':'')+'>'+
+                  esc((z.properties.tag||z.properties.id)+' · '+(z.properties.name||''))+'</option>').join("");
+      extra = '<select onchange="assignZone(\''+p.id+'\',this.value)">'+
+              '<option value="">— outside every zone —</option>'+opts+'</select>';
+    }
+    btns = extra + '<div class="pbtns">'+
+      (s==="flagged" ? '<button onclick="setStatus(\''+p.id+'\',\'active\')">Clear flag</button>'
+                     : '<button onclick="setStatus(\''+p.id+'\',\'flagged\')">Flag</button>')+
+      (s==="off"     ? '<button onclick="setStatus(\''+p.id+'\',\'active\')">Turn on</button>'
+                     : '<button onclick="setStatus(\''+p.id+'\',\'off\')">Turn off</button>')+
+      '<button onclick="editLabel(\''+p.id+'\')">Rename</button>'+
+      (["controller","zone"].includes(t) ? '<button onclick="cycleColor(\''+p.id+'\')">Color</button>' : '')+
+      '<button class="danger" onclick="deleteFeature(\''+p.id+'\')">Delete</button></div>';
+  }
+
+  return '<div class="pop"><div class="htop"><span class="kind">'+TYPE_META[t].label.replace(/s$/,'')+'</span>'+
+    (p.tag ? '<span class="ptag">'+esc(p.tag)+'</span>' : '')+
+    '<h3>'+esc(p.name || p.id)+'</h3><span class="badge '+s+'">'+s+'</span></div>'+
+    (dl ? '<dl>'+dl+'</dl>' : '')+
+    (p.notes ? '<p class="note">'+esc(p.notes)+'</p>' : '')+ btns +'</div>';
+}
+
+/* ═══ mutations ════════════════════════════════════════════════════════════ */
+function markDirty(){ dirty = true; updateSaveBtn(); }
+function updateSaveBtn(){
+  const b = document.getElementById("saveBtn"); if (!b) return;
+  b.disabled = !dirty; b.classList.toggle("dirty", dirty);
+}
+window.addEventListener("beforeunload", e => {
+  if (dirty){ e.preventDefault(); e.returnValue = ""; }
+});
+
+window.setStatus = (id,s) => {
+  const f = byId(id); if (!f) return;
+  f.properties.status = s; markDirty(); render(); selectFeature(id); toast("Set to " + s);
+};
+window.editLabel = id => {
+  const f = byId(id); if (!f) return;
+  const n = prompt("Name:", f.properties.name || ""); if (n === null) return;
+  const t = prompt("Short tag shown on the map:", f.properties.tag || ""); if (t === null) return;
+  f.properties.name = n.trim(); f.properties.tag = t.trim();
+  markDirty(); render(); selectFeature(id); toast("Renamed");
+};
+window.cycleColor = id => {
+  const f = byId(id); if (!f) return;
+  f.properties.colorIdx = ((f.properties.colorIdx||0) + 1) % ZONE_COLORS.length;
+  markDirty(); render(); selectFeature(id);
+};
+window.assignController = (zoneId, ctrlId) => {
+  const z = byId(zoneId); if (!z) return;
+  z.properties.controllerId = ctrlId || null;
+  markDirty(); render(); toast(ctrlId ? "Assigned to " + ctrlId : "Controller cleared");
+};
+window.assignZone = (headId, zoneId) => {
+  const h = byId(headId); if (!h) return;
+  h.properties.zoneId = zoneId || null;
+  markDirty(); render(); toast(zoneId ? "Assigned to " + zoneId : "Zone cleared");
+};
+window.deleteFeature = id => {
+  const f = byId(id); if (!f) return;
+  const t = typeOf(f), p = f.properties;
+  let warn = 'Delete "' + (p.name || p.id) + '"?';
+  if (t === "controller"){
+    const n = featuresOf("zone").filter(z => z.properties.controllerId === id).length;
+    if (n) warn += "\n\n" + n + " zone(s) will become unassigned (not deleted).";
+  }
+  if (t === "zone"){
+    const n = featuresOf("head").filter(h => h.properties.zoneId === id).length;
+    if (n) warn += "\n\n" + n + " head(s) will become unassigned (not deleted).";
+  }
+  if (!confirm(warn)) return;
+  DATA.features = DATA.features.filter(x => x.properties.id !== id);
+  /* orphan the children rather than cascade-deleting — losing head positions to
+     a mis-clicked zone delete is unrecoverable without a save history */
+  DATA.features.forEach(x => {
+    if (x.properties.controllerId === id) x.properties.controllerId = null;
+    if (x.properties.zoneId === id)       x.properties.zoneId = null;
+  });
+  markDirty(); render(); toast("Deleted");
+};
+
+/* ═══ draw / edit — zone boundaries only ═══════════════════════════════════ */
+let drawControl = null, drawnItems = null;
+
+function enableEdit(on){
+  if (on && pointMode) enablePointMode(pointMode);   // toggles it off
+  editMode = on;
+  document.body.classList.toggle("editing", on);
+  const b = document.getElementById("editBtn"); if (b) b.classList.toggle("on", on);
+  if (on){
+    try{
+      drawnItems = new L.FeatureGroup().addTo(map);
+      drawControl = new L.Control.Draw({
+        edit:{featureGroup:drawnItems, edit:false, remove:false},
+        draw:{
+          polygon:  {showArea:false, shapeOptions:{color:"#046BD2", weight:2.5, fillOpacity:.25}},
+          rectangle:{shapeOptions:{color:"#046BD2", weight:2.5, fillOpacity:.25}},
+          marker:false, polyline:false, circle:false, circlemarker:false
+        }
+      });
+      map.addControl(drawControl);
+      map.on(L.Draw.Event.CREATED, onDrawCreated);
+    } catch(err){ toast("Drawing unavailable — use Import."); console.warn(err); }
+  } else {
+    if (drawControl){ map.removeControl(drawControl); drawControl = null; }
+    if (drawnItems){ map.removeLayer(drawnItems); drawnItems = null; }
+    map.off(L.Draw.Event.CREATED, onDrawCreated);
+  }
+}
+
+function onDrawCreated(e){
+  const gj = e.layer.toGeoJSON();
+  const name = prompt("Zone name:", "");
+  if (name === null) return;
+  const tag = prompt("Short tag shown on the map:", nextTag("zone"));
+  if (tag === null) return;
+
+  const props = {
+    id: nextId("zone"), featureType: "zone",
+    tag: (tag||"").trim() || nextTag("zone"),
+    name: (name||"").trim(),
+    status: "active", notes: "",
+    colorIdx: nextColorIdx(), valve: "", gpm: "", schedule: "",
+    /* auto-assign to the controller whose marker sits inside the new polygon,
+       if there is exactly one — saves a manual step in the common case */
+    controllerId: (() => {
+      const inside = featuresOf("controller").filter(c =>
+        inFeature(c.geometry.coordinates[0], c.geometry.coordinates[1], gj.geometry));
+      return inside.length === 1 ? inside[0].properties.id : null;
+    })()
+  };
+
+  DATA.features.push({type:"Feature", geometry:gj.geometry, properties:props});
+
+  /* a new polygon may capture heads that were previously unassigned */
+  let claimed = 0;
+  featuresOf("head").forEach(h => {
+    if (h.properties.zoneId) return;
+    const [lng,lat] = h.geometry.coordinates;
+    if (inFeature(lng, lat, gj.geometry)){ h.properties.zoneId = props.id; claimed++; }
+  });
+  toast(props.tag + " added" + (claimed ? " — claimed " + claimed + " loose head(s)" : ""));
+
+  markDirty(); render();
+}
+
+/* ═══ point placement — control boxes, light poles, sprinkler heads ═══════════
+   One mechanism, three types. Heads place silently (name later, count is high);
+   boxes and lights prompt once per click (count is low, naming up front is
+   worth the extra step). Undo/Escape work the same for all three. */
+const POINT_TYPES = {
+  head:  {label:"sprinkler heads", btn:"placeBtn", prompt:false},
+  box:   {label:"control boxes",   btn:"boxBtn",   prompt:true},
+  light: {label:"light poles",     btn:"lightBtn", prompt:true}
+};
+let pointMode = null;
+
+function enablePointMode(type){
+  const turningOff = pointMode === type;
+  if (editMode) enableEdit(false);
+  Object.values(POINT_TYPES).forEach(m => {
+    document.body.classList.remove("placing-" + Object.keys(POINT_TYPES).find(k=>POINT_TYPES[k]===m));
+    const b = document.getElementById(m.btn); if (b) b.classList.remove("on");
+  });
+  map.off("click", onPointClick);
+
+  if (turningOff){
+    if (placedStack.length) toast("Placed " + placedStack.length + " " + POINT_TYPES[type].label);
+    pointMode = null; placedStack = [];
+    return;
+  }
+  pointMode = type; placedStack = [];
+  document.body.classList.add("placing-" + type);
+  const b = document.getElementById(POINT_TYPES[type].btn); if (b) b.classList.add("on");
+  document.getElementById("pointBanner").innerHTML =
+    "Placing " + POINT_TYPES[type].label + " — click to drop. <b>Ctrl+Z</b> undo · <b>Esc</b> to stop.";
+  map.on("click", onPointClick);
+}
+
+function onPointClick(e){
+  const type = pointMode; if (!type) return;
+  const lat = e.latlng.lat, lng = e.latlng.lng;
+  let props;
+
+  if (type === "head"){
+    const z = zoneAt(lng, lat);
+    props = { id:nextId("head"), featureType:"head", zoneId: z ? z.properties.id : null,
+      tag:nextTag("head"), name:"", headType:"rotor", status:"active", notes:"" };
+  } else {
+    const tag = prompt("Short tag shown on the map:", nextTag(type));
+    if (tag === null) return;
+    const name = prompt((type === "box" ? "Control box" : "Light pole") + " name:", "");
+    if (name === null) return;
+    props = { id:nextId(type), featureType:type,
+      tag:(tag||"").trim() || nextTag(type), name:(name||"").trim(),
+      status:"active", notes:"" };
+    if (type === "box")   { props.colorIdx = nextColorIdx(); props.make = ""; }
+    if (type === "light") { props.lampType = ""; }
+  }
+
+  DATA.features.push({type:"Feature", geometry:{type:"Point", coordinates:[lng,lat]}, properties:props});
+  placedStack.push(props.id);
+  markDirty(); render();
+}
+
+function undoPoint(){
+  if (!placedStack.length) return;
+  const id = placedStack.pop();
+  DATA.features = DATA.features.filter(f => f.properties.id !== id);
+  markDirty(); render(); toast("Undid last placement");
+}
+
+document.addEventListener("keydown", e => {
+  if (!IS_ADMIN) return;
+  if (e.key === "Escape"){
+    if (pointMode) enablePointMode(pointMode);
+    else if (editMode) enableEdit(false);
+  }
+  if (pointMode && (e.ctrlKey||e.metaKey) && e.key.toLowerCase() === "z"){
+    e.preventDefault(); undoPoint();
+  }
+});
+
+/* ═══ normalize / import / export / save ═══════════════════════════════════ */
+function normalize(f, i){
+  const p = f.properties || {};
+  const geomType = f.geometry && f.geometry.type;
+  let t = p.featureType;
+  /* legacy: everything used to be featureType "marker" */
+  if (!t || t === "marker") t = geomType === "Point" ? "controller" : "zone";
+  if (!TYPE_META[t]) t = geomType === "Point" ? "controller" : "zone";
+
+  const out = {
+    id: p.id || (TYPE_META[t].prefix + (i+1)),
+    featureType: t,
+    tag: p.tag || "",
+    name: p.name || "",
+    status: ["active","flagged","off"].includes(p.status) ? p.status : "active",
+    notes: p.notes || ""
+  };
+  if (t === "controller"){
+    out.colorIdx = typeof p.colorIdx === "number" ? p.colorIdx : i;
+    out.make = p.make || p.controller || "";
+  }
+  if (t === "zone"){
+    out.colorIdx     = typeof p.colorIdx === "number" ? p.colorIdx : i;
+    out.controllerId = p.controllerId || null;
+    out.valve = p.valve || ""; out.gpm = p.gpm || ""; out.schedule = p.schedule || "";
+  }
+  if (t === "head"){ out.zoneId = p.zoneId || null; out.headType = p.headType || "rotor"; }
+  if (t === "light"){ out.lampType = p.lampType || ""; }
+  return {type:"Feature", geometry:f.geometry, properties:out};
+}
+
+function loadCollection(gj){
+  const feats = gj.type === "FeatureCollection" ? gj.features : (gj.type === "Feature" ? [gj] : null);
+  if (!feats) throw new Error("Not GeoJSON");
+  let out = feats.map(normalize);
+  /* public build never receives operational detail — filtered at load, not hidden */
+  if (!IS_ADMIN) out = out.filter(f => PUBLIC_TYPES.includes(typeOf(f)));
+  DATA = {type:"FeatureCollection", features: out};
+}
+
+async function saveToServer(){
+  const b = document.getElementById("saveBtn");
+  if (b) { b.disabled = true; b.textContent = "Saving…"; }
+  try{
+    const res = await fetch(SAVE_URL, {
+      method:"POST",
+      headers:{"Content-Type":"application/json","X-AF-Nonce":NONCE},
+      body: JSON.stringify(DATA)
+    });
+    const out = await res.json().catch(() => ({ok:false, error:"Bad response from server"}));
+    if (!res.ok || !out.ok) throw new Error(out.error || ("HTTP " + res.status));
+    dirty = false;
+    toast("Saved " + out.count + " features");
+  } catch(err){
+    toast("Save failed: " + err.message);
+  } finally {
+    if (b){
+      b.innerHTML = '<svg viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>Save';
+      updateSaveBtn();
+    }
+    renderFoot();
+  }
+}
+
+/* ═══ wiring ═══════════════════════════════════════════════════════════════ */
+setTimeout(() => {
+  const lb = document.getElementById("labelsBtn");
+  if (lb) lb.onclick = () => {
+    labelsOn = !labelsOn;
+    document.body.classList.toggle("labels-hidden", !labelsOn);
+    lb.classList.toggle("on", labelsOn);
+  };
+  const rt = document.getElementById("railToggle");
+  if (rt) rt.onclick = () => document.getElementById("rail").classList.toggle("open");
+
+  if (!IS_ADMIN) return;
+
+  const eb = document.getElementById("editBtn");   if (eb) eb.onclick = () => enableEdit(!editMode);
+  const bb = document.getElementById("boxBtn");    if (bb) bb.onclick = () => enablePointMode("box");
+  const gb = document.getElementById("lightBtn");  if (gb) gb.onclick = () => enablePointMode("light");
+  const pb = document.getElementById("placeBtn");  if (pb) pb.onclick = () => enablePointMode("head");
+  const sb = document.getElementById("saveBtn");   if (sb) sb.onclick = saveToServer;
+
+  const xb = document.getElementById("exportBtn");
+  if (xb) xb.onclick = () => {
+    const blob = new Blob([JSON.stringify(DATA,null,2)], {type:"application/geo+json"});
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = "zones.geojson"; a.click();
+    URL.revokeObjectURL(a.href);
+    toast("Exported zones.geojson");
+  };
+
+  const ib = document.getElementById("importBtn");
+  if (ib) ib.onclick = () => document.getElementById("fileInput").click();
+  document.getElementById("fileInput").onchange = e => {
+    const file = e.target.files[0]; if (!file) return;
+    if (dirty && !confirm("You have unsaved changes. Importing replaces everything on the map. Continue?")){
+      e.target.value = ""; return;
+    }
+    const rd = new FileReader();
+    rd.onload = () => {
+      try{
+        loadCollection(JSON.parse(rd.result));
+        markDirty(); render();
+        const b = L.geoJSON(DATA).getBounds(); if (b.isValid()) map.fitBounds(b.pad(0.2));
+        toast("Loaded " + DATA.features.length + " features");
+      } catch(err){ toast("Import failed: " + err.message); }
+    };
+    rd.readAsText(file);
+    e.target.value = "";
+  };
+}, 0);
+
+let toastTimer = null;
+function toast(m){
+  const t = document.getElementById("toast");
+  t.textContent = m; t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 2600);
+}
+
+/* ═══ boot ═════════════════════════════════════════════════════════════════ */
+map.attributionControl.setPrefix("");
+fetch(DATA_URL, {cache:"no-store"})
+  .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+  .then(gj => {
+    loadCollection(gj);
+    render();
+    const b = L.geoJSON(DATA).getBounds();
+    if (b.isValid()) map.fitBounds(b.pad(0.25), {maxZoom:19});
+  })
+  .catch(err => {
+    console.warn("zones.geojson unavailable:", err);
+    render();
+    toast("Could not load map data");
+  });
+render();
+</script>
