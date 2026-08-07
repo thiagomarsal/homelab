@@ -185,10 +185,13 @@
 const MODE        = "__MODE__";
 const IS_ADMIN    = MODE === "admin";
 const NONCE       = "__AF_NONCE__";
-const SAVE_URL    = "/irrigation-admin/save";
+/* Must match AF_IRR_PATH in the mu-plugin (irrigation-plugin.yaml) — that's
+   what actually gates and serves these routes. */
+const ADMIN_PATH  = "/community-map-admin";
+const SAVE_URL    = ADMIN_PATH + "/save";
 /* Admin reads the full set through a capability-gated endpoint; the public file
    holds only zones and light poles, derived server-side on every save. */
-const DATA_URL    = IS_ADMIN ? "/irrigation-admin/data"
+const DATA_URL    = IS_ADMIN ? ADMIN_PATH + "/data"
                              : "/wp-content/uploads/irrigation-maps/zones.geojson";
 const CENTER      = [40.5388, -111.8733];
 const START_ZOOM  = 17;
