@@ -1,10 +1,10 @@
-<!-- Auburn Fields HOA — Irrigation Map (canonical source)
+<!-- Auburn Fields HOA — Community Map (canonical source)
      Build with ./build.sh — do not edit the deployed copies directly.
      __MODE__ is replaced with "admin" or "public" at build time.
      __AF_NONCE__ is replaced by the mu-plugin at request time (admin build only).
 
      Feature model:  controller -> zone -> head   (+ light poles, independent)
-     Data:           uploads/irrigation-maps/zones.geojson
+     Data:           uploads/community-map/zones.geojson
      Public build:   zones + light poles only, filtered at load. -->
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
@@ -151,7 +151,7 @@
 
 <div class="app">
   <aside class="rail" id="rail">
-    <div class="cap">Irrigation Map<small id="subLabel">Community Map</small></div>
+    <div class="cap">Community Map<small id="subLabel"></small></div>
     <div class="scroll">
       <h2>Layers</h2>
       <div class="panel" id="layerPanel"></div>
@@ -192,7 +192,7 @@ const SAVE_URL    = ADMIN_PATH + "/save";
 /* Admin reads the full set through a capability-gated endpoint; the public file
    holds only zones and light poles, derived server-side on every save. */
 const DATA_URL    = IS_ADMIN ? ADMIN_PATH + "/data"
-                             : "/wp-content/uploads/irrigation-maps/zones.geojson";
+                             : "/wp-content/uploads/community-map/zones.geojson";
 const CENTER      = [40.5388, -111.8733];
 const START_ZOOM  = 17;
 
@@ -228,7 +228,7 @@ let editMode=false, labelsOn=false, dirty=false;
 let placedStack=[];
 
 document.body.classList.add("mode-"+MODE, "labels-hidden");
-document.getElementById("subLabel").textContent = IS_ADMIN ? "Board Admin" : "Community Map";
+document.getElementById("subLabel").textContent = IS_ADMIN ? "Board Admin" : "";
 document.getElementById("treeHead").textContent = IS_ADMIN ? "Controllers" : "Zones";
 
 /* ═══ helpers ══════════════════════════════════════════════════════════════ */

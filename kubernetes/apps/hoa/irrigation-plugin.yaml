@@ -23,7 +23,7 @@ data:
      *
      * Data lives in two places on purpose:
      *   uploads/irrigation-admin/zones.geojson  full set — Apache-denied, board only
-     *   uploads/irrigation-maps/zones.geojson   zones + light poles only — public
+     *   uploads/community-map/zones.geojson     zones + light poles only — public
      * The public copy is derived on every save, so controller and sprinkler-head
      * positions are never served to a resident's browser.
      */
@@ -40,7 +40,7 @@ data:
         return [
             'admin_html'  => $base . '/irrigation-admin/irrigation-admin.html',
             'admin_data'  => $base . '/irrigation-admin/zones.geojson',
-            'public_data' => $base . '/irrigation-maps/zones.geojson',
+            'public_data' => $base . '/community-map/zones.geojson',
         ];
     }
 
