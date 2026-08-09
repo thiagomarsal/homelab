@@ -63,6 +63,12 @@ grafana_admin_password: !vault |
           3032646239636665340a343630343463323639313430666261383965636435643031633736393465
           6465
 
+# n8n automation SSH key — public key only, private key lives in n8n credential store (not git).
+# Installed to root's authorized_keys with a forced command (see n8n-svc-user.yml), so the key
+# can only ever run the apt-upgrade/healthcheck wrapper script, never an arbitrary command.
+# Generate with: ssh-keygen -t ed25519 -f n8n_pve_upgrade -C "n8n-automation" -N ""
+n8n_pve_pubkey: "ssh-ed25519 AAAA... n8n-automation"  # placeholder — replace with real pubkey locally, never commit the real one
+
 # Proxmox VE nodes (scraped by pve-exporter)
 pve_nodes:
   - 192.168.1.10  # pve01

@@ -1,0 +1,58 @@
+---
+- name: Set up n8n automation access on PVE hosts
+  hosts: pve
+  vars:
+    svc_user: svc-n8n
+  tasks:
+    - name: Remove unused svc-n8n user (forced-command root key used instead)
+      user:
+        name: "{{ svc_user }}"
+        state: absent
+        remove: yes
+
+    - name: Deploy apt-upgrade/healthcheck wrapper script
+      copy:
+        dest: /usr/local/sbin/n8n-apt-upgrade.sh
+        owner: root
+        group: root
+        mode: "0700"
+        content: |
+          #!/bin/bash
+          # Forced-command target for the n8n automation SSH key.
+          # sshd always execs this script regardless of client-requested command;
+          # the client's requested command survives in $SSH_ORIGINAL_COMMAND and
+          # selects the branch below. This lets one restricted key serve both the
+          # monthly upgrade+reboot job and the post-reboot health check.
+          case "$SSH_ORIGINAL_COMMAND" in
+            healthcheck)
+              if systemctl is-active --quiet corosync && pvecm status 2>/dev/null | grep -q "Quorate"; then
+                echo "HEALTHY"
+                exit 0
+              fi
+              echo "NOT_HEALTHY"
+              exit 1
+              ;;
+            upgrade)
+              set -e
+              BEFORE_KERNEL=$(uname -r)
+              apt-get update
+              apt-get dist-upgrade -y
+              apt-get autoremove -y
+              LATEST_KERNEL=$(dpkg -l 'proxmox-kernel-*' 2>/dev/null | awk '/^ii/{print $2}' | sed 's/proxmox-kernel-//' | sort -V | tail -1)
+              echo "BEFORE_KERNEL=${BEFORE_KERNEL}"
+              echo "LATEST_INSTALLED_KERNEL=${LATEST_KERNEL}"
+              echo "UPGRADE_OK"
+              nohup bash -c 'sleep 5 && reboot' >/dev/null 2>&1 &
+              disown
+              ;;
+            *)
+              echo "unknown command" >&2
+              exit 1
+              ;;
+          esac
+
+    - name: Install n8n key restricted to wrapper script only
+      authorized_key:
+        user: root
+        key: "{{ n8n_pve_pubkey }}"
+        key_options: 'command="/usr/local/sbin/n8n-apt-upgrade.sh",no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty,from="192.168.1.0/24"'
