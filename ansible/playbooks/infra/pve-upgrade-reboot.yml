@@ -1,0 +1,84 @@
+---
+# Upgrade and reboot a single PVE host, then wait until it is genuinely back:
+# quorate, with its guests running again.
+#
+# Deliberately scoped to ONE host per invocation (pass --limit). The driver script
+# scripts/pve-rolling-upgrade.sh sequences the fleet and checks k3s + Longhorn
+# health between hosts, because taking a second node down before Longhorn has
+# rebuilt its replicas would risk losing 2 of 3 copies of a volume.
+#
+# Usage:
+#   ansible-playbook playbooks/infra/pve-upgrade-reboot.yml --limit pve06
+
+- name: Upgrade and reboot a PVE host
+  hosts: pve
+  serial: 1
+  gather_facts: yes
+
+  pre_tasks:
+    - name: Refuse to run against more than one host at a time
+      assert:
+        that: ansible_play_hosts | length == 1
+        fail_msg: >-
+          This play must target exactly one host (use --limit). Rebooting several
+          PVE hosts concurrently can take down multiple Longhorn replicas and
+          break corosync quorum.
+      run_once: true
+
+    - name: Record kernel before upgrade
+      command: uname -r
+      register: kernel_before
+      changed_when: false
+
+  tasks:
+    - name: apt update + dist-upgrade
+      apt:
+        update_cache: yes
+        upgrade: dist
+        autoremove: yes
+      register: apt_result
+
+    - name: Reboot and wait for the host to answer again
+      reboot:
+        msg: "Ansible rolling PVE upgrade"
+        reboot_timeout: 900
+        post_reboot_delay: 20
+
+    # grep rather than an inline string match: the literal "Quorate: Yes" contains
+    # a colon, which YAML cannot parse in an unquoted until: expression.
+    - name: Wait for corosync quorum
+      shell: pvecm status 2>/dev/null | grep -qE '^Quorate:[[:space:]]+Yes'
+      args:
+        executable: /bin/bash
+      register: quorum
+      until: quorum.rc == 0
+      retries: 30
+      delay: 10
+      changed_when: false
+
+    # Guests have onboot=1 but Proxmox will not autostart them until the node is
+    # quorate, so this has to come after the quorum gate above.
+    - name: Wait for all previously-running guests to come back
+      shell: |
+        set -o pipefail
+        qm list 2>/dev/null | tail -n +2 | awk '$3!="running" && $3!="stopped" {print $2}' | wc -l
+      args:
+        executable: /bin/bash
+      register: guest_state
+      until: guest_state.stdout | trim == "0"
+      retries: 30
+      delay: 10
+      changed_when: false
+
+    - name: Record kernel after upgrade
+      command: uname -r
+      register: kernel_after
+      changed_when: false
+
+    - name: Report
+      debug:
+        msg: >-
+          {{ inventory_hostname }}: kernel {{ kernel_before.stdout }} ->
+          {{ kernel_after.stdout }} | pve {{ ansible_facts.packages['pve-manager'][0].version
+          | default('?') if ansible_facts.packages is defined else 'n/a' }} |
+          quorate, guests up
