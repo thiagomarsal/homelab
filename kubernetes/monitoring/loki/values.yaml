@@ -29,6 +29,11 @@ singleBinary:
     enabled: true
     storageClass: longhorn
     size: 10Gi
+  # No node pinning or exclusion on purpose: let the scheduler place Loki. When
+  # pve06 died on 2026-08-15 Loki went with it, but the cause was not placement —
+  # a StatefulSet pod holding an RWO Longhorn volume cannot reschedule while its
+  # node is unreachable, which is true of every node. See the Longhorn
+  # node-down-pod-deletion-policy setting for the fix that actually applies.
 
 # Disable scaled-out components — not needed in SingleBinary mode
 read:

@@ -95,6 +95,37 @@ and NIC without hanging — so this is **degrading hardware on pve06**, not a re
 If pve06 hangs again with offloads disabled, replace the NIC (USB3 gigabit adapter) or
 retire the host.
 
+## Why guests stayed down for 14 hours
+
+A StatefulSet pod holding an RWO Longhorn volume cannot be rescheduled while its
+node is unreachable: kubelet never confirms the delete, so the pod sits in
+`Terminating` and the volume stays attached to a node nobody can reach. `loki-0`,
+`porquinho-postgres-0` and a Longhorn instance-manager were stuck this way for the
+whole outage. This is true of **every** node, not just pve06 — it is not a
+placement problem, so pinning or excluding nodes does not help.
+
+Longhorn ships `node-down-pod-deletion-policy: do-nothing`, which is what allows
+that. Changed 2026-08-16 to:
+
+```bash
+kubectl -n longhorn-system patch setting.longhorn.io node-down-pod-deletion-policy \
+  --type=merge -p '{"value":"delete-statefulset-pod"}'
+```
+
+Longhorn now force-deletes StatefulSet pods on a confirmed-down node, releasing the
+volume so the StatefulSet reschedules itself.
+
+Longhorn here is a Rancher catalog app with `longhorn.default_setting: false`, so
+the chart does not manage settings and this survives a chart upgrade. It is not
+represented anywhere in this repo — reapply the command above if Longhorn is ever
+reinstalled.
+
+**Caveat specific to this hardware:** the e1000e hang leaves a host *running* with a
+dead NIC rather than powered off, so the old pod may still be writing locally when
+the replacement starts. Longhorn's RWO attachment guard is what prevents an actual
+dual-mount; the safety margin is thinner than the default policy's. Accepted here
+because a 14-hour blind outage is the worse risk.
+
 ## Detection
 
 `PVE Host Watchdog` (n8n, id `bbLA156cH6tPwRlC`) SSH-probes every PVE host every 10
