@@ -1,0 +1,105 @@
+---
+# Workaround for "e1000e: Detected Hardware Unit Hang" on the Intel I219-LM.
+#
+# pve06 wedged its TX ring twice (2026-08-10 and 2026-08-15), each time logging
+# thousands of hang events with the PHY link still up: the host kept running and
+# writing to disk, but no packet left the NIC and it never recovered on its own
+# (the driver logged zero "Reset adapter" attempts). Disabling TCP/generic
+# segmentation offload is the long-standing mitigation for this errata.
+#
+# Applied serially so a NIC reconfigure can never disturb corosync quorum on
+# more than one node at a time.
+#
+# Usage:
+#   ansible-playbook playbooks/infra/nic-offload-fix.yml --limit pve06
+#   ansible-playbook playbooks/infra/nic-offload-fix.yml        # whole pve group
+
+- name: Disable e1000e segmentation offloads on Intel I219-LM NICs
+  hosts: pve
+  serial: 1
+  vars:
+    offload_script: /usr/local/sbin/e1000e-offload-fix.sh
+    offload_unit: e1000e-offload-fix.service
+
+  tasks:
+    - name: Detect interfaces bound to the e1000e driver
+      shell: |
+        set -o pipefail
+        for i in /sys/class/net/*/device/driver; do
+          if [ "$(basename "$(readlink -f "$i")")" = "e1000e" ]; then
+            echo "$i" | awk -F/ '{print $5}'
+          fi
+        done
+      args:
+        executable: /bin/bash
+      register: e1000e_ifaces
+      changed_when: false
+      check_mode: no   # read-only probe; must still run under --check
+
+    - name: Skip hosts with no e1000e NIC
+      meta: end_host
+      when: e1000e_ifaces.stdout | trim | length == 0
+
+    - name: Report detected interfaces
+      debug:
+        msg: "{{ inventory_hostname }}: e1000e interfaces = {{ e1000e_ifaces.stdout_lines }}"
+
+    # The interface name is not consistent across the fleet (pve05 uses eno1, the
+    # rest use nic0), so the script rediscovers it at boot rather than hardcoding.
+    - name: Deploy offload-disable script
+      copy:
+        dest: "{{ offload_script }}"
+        owner: root
+        group: root
+        mode: "0755"
+        content: |
+          #!/bin/bash
+          # Disable segmentation offload on every e1000e interface.
+          # Workaround for I219-LM "Detected Hardware Unit Hang" TX ring wedge.
+          set -u
+          for path in /sys/class/net/*/device/driver; do
+            [ -e "$path" ] || continue
+            [ "$(basename "$(readlink -f "$path")")" = "e1000e" ] || continue
+            iface=$(echo "$path" | awk -F/ '{print $5}')
+            /usr/sbin/ethtool -K "$iface" tso off gso off gro off
+            logger -t e1000e-offload-fix "disabled tso/gso/gro on ${iface}"
+          done
+
+    - name: Install systemd unit to reapply on every boot
+      copy:
+        dest: "/etc/systemd/system/{{ offload_unit }}"
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Disable e1000e segmentation offloads (I219-LM hardware unit hang workaround)
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=oneshot
+          RemainAfterExit=yes
+          ExecStart={{ offload_script }}
+
+          [Install]
+          WantedBy=multi-user.target
+
+    # Applied as a task rather than a handler on purpose: handlers fire at the end
+    # of the play, which would run the verification below against the old settings.
+    - name: Enable and apply the unit now
+      systemd:
+        name: "{{ offload_unit }}"
+        enabled: yes
+        state: restarted
+        daemon_reload: yes
+
+    - name: Verify offloads are off
+      shell: "ethtool -k {{ item }} | grep -E '^(tcp-segmentation-offload|generic-segmentation-offload|generic-receive-offload):'"
+      args:
+        executable: /bin/bash
+      loop: "{{ e1000e_ifaces.stdout_lines }}"
+      register: offload_state
+      changed_when: false
+      # Match ": on" not bare "on" — "segmentation-offload" contains the substring "on".
+      failed_when: "': on' in offload_state.stdout"

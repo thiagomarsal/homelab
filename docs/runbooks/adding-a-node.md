@@ -1,10 +1,32 @@
 # Runbook: Adding a Node
 
 All existing nodes (masters + workers) run **Debian 12 (bookworm) cloud-init images**,
-not Ubuntu — there's no reusable Proxmox template, each VM is built fresh from the
-official genericcloud qcow2.
+not Ubuntu.
 
-## Provision the VM (on the target Proxmox host)
+## Provision the VM (scripted — preferred)
+
+`scripts/pve-worker-provision.sh` builds a reusable cloud-init template on a PVE host
+and clones workers from it, using the same VM profile as the hand-built nodes
+(4 cores, 12GB, 100G, `cpu=host`, `balloon=0`, `onboot=1`).
+
+VMIDs are unique **cluster-wide**, not per-node, so each host needs its own template
+VMID. Convention: `9000 + pve host number`.
+
+```bash
+# once per PVE host — local-lvm is node-local, templates cannot be shared
+TEMPLATE_VMID=9007 ./scripts/pve-worker-provision.sh template 192.168.1.16
+
+# then one clone per worker
+TEMPLATE_VMID=9007 ./scripts/pve-worker-provision.sh clone 192.168.1.16 117 k3s-worker-4 192.168.1.56
+```
+
+The clone step waits for the guest to answer SSH before returning. It refuses to
+overwrite an existing VMID, and template creation is idempotent.
+
+Pick the next free VMID (masters 110-112, workers 113+) and the next free static IP
+(masters .50-.52, workers .53+). Check `qm list` on every reachable pve host first.
+
+## Provision the VM manually (fallback)
 
 1. Pick next free VMID (masters use 110/111/112, workers 113/114 — check `qm list` on
    every reachable pve host first, since on-demand hosts may hide VMs while offline)
