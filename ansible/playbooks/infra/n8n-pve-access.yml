@@ -47,7 +47,10 @@
               apt-get update
               apt-get dist-upgrade -y
               apt-get autoremove -y
-              LATEST_KERNEL=$(dpkg -l 'proxmox-kernel-*' 2>/dev/null | awk '/^ii/{print $2}' | sed 's/proxmox-kernel-//' | sort -V | tail -1)
+              # grep '^[0-9]' because the glob also matches proxmox-kernel-helper,
+              # which stripped of its prefix sorts last and made the report claim
+              # LATEST_INSTALLED_KERNEL=helper.
+              LATEST_KERNEL=$(dpkg -l 'proxmox-kernel-*' 2>/dev/null | awk '/^ii/{print $2}' | sed 's/^proxmox-kernel-//' | grep -E '^[0-9]' | sort -V | tail -1)
               echo "BEFORE_KERNEL=${BEFORE_KERNEL}"
               echo "LATEST_INSTALLED_KERNEL=${LATEST_KERNEL}"
               echo "UPGRADE_OK"
