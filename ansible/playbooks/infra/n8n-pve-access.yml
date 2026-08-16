@@ -63,8 +63,13 @@
               ;;
           esac
 
-    - name: Install n8n key restricted to wrapper script only
+    # run_once because /root/.ssh/authorized_keys is a symlink to
+    # /etc/pve/priv/authorized_keys — one pmxcfs-backed file shared by the whole
+    # cluster. Letting all 8 hosts run this task in parallel raced the module's
+    # read-check-append and appended a duplicate key on every playbook run.
+    - name: Install n8n key restricted to wrapper script only (cluster-shared file)
       authorized_key:
         user: root
         key: "{{ n8n_pve_pubkey }}"
         key_options: 'command="/usr/local/sbin/n8n-apt-upgrade.sh",no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty,from="192.168.1.0/24"'
+      run_once: true
