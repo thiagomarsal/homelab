@@ -24,11 +24,14 @@
           # selects the branch below. This lets one restricted key serve both the
           # monthly upgrade+reboot job and the post-reboot health check.
           #
-          # n8n's SSH node prepends its "cwd" setting, sending "cd / && healthcheck"
-          # rather than "healthcheck". Strip that prefix before matching — without
-          # this every request fell through to the reject branch and the upgrade job
-          # silently did nothing.
-          REQUEST="${SSH_ORIGINAL_COMMAND#cd * && }"
+          # n8n's SSH node prepends its "cwd" setting, sending "cd / ; healthcheck"
+          # rather than "healthcheck". Strip any leading "cd <path> ;" or "cd <path> &&"
+          # before matching — without this every request fell through to the reject
+          # branch and the upgrade job silently did nothing.
+          REQUEST="${SSH_ORIGINAL_COMMAND##*&& }"
+          REQUEST="${REQUEST##*; }"
+          REQUEST="${REQUEST#"${REQUEST%%[![:space:]]*}"}"   # ltrim
+          REQUEST="${REQUEST%"${REQUEST##*[![:space:]]}"}"   # rtrim
           case "$REQUEST" in
             healthcheck)
               if systemctl is-active --quiet corosync && pvecm status 2>/dev/null | grep -q "Quorate"; then
