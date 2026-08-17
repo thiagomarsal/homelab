@@ -155,7 +155,7 @@
       #
       # Date format uses a single '%' (e.g. %Y%m%d) deliberately, not '%%'.
       # This content is rendered once by Ansible's `copy` module — which
-      # only interprets Jinja2 ({{ }} / {% %}), not printf/date-style '%'
+      # only interprets Jinja2 delimiters, not printf/date-style '%'
       # escaping — so a lone '%' is not "eaten" by Ansible and reaches the
       # shell's `date` command unchanged. Doubling it (`%%Y%%m%%d`) would
       # survive Ansible identically, but GNU date then interprets each `%%`
