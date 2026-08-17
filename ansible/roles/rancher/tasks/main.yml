@@ -107,7 +107,7 @@
     src: "{{ playbook_dir }}/../../../kubernetes/"
     dest: /tmp/homelab-k8s/
     mode: '0644'
-  tags: [hoa]
+  tags: [hoa, monitoring]
 
 - name: Apply namespaces
   command: k3s kubectl apply -f /tmp/homelab-k8s/base/namespaces.yml
@@ -241,16 +241,19 @@
 - name: Add prometheus-community Helm repo
   command: helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
   changed_when: false
+  tags: [monitoring]
 
 - name: Update Helm repos
   command: helm repo update
   changed_when: false
+  tags: [monitoring]
 
 - name: Render kube-prometheus-stack values
   template:
     src: kube-prometheus-stack-values.yml.j2
     dest: /tmp/kube-prometheus-stack-values.yml
     mode: '0600'
+  tags: [monitoring]
 
 - name: Install kube-prometheus-stack
   command: >-
@@ -262,17 +265,14 @@
     --wait --timeout 10m
   environment:
     KUBECONFIG: /etc/rancher/k3s/k3s.yaml
-
-- name: Remove kube-prometheus-stack values temp file
-  file:
-    path: /tmp/kube-prometheus-stack-values.yml
-    state: absent
+  tags: [monitoring]
 
 - name: Apply Grafana IngressRoute
   command: k3s kubectl apply -f /tmp/homelab-k8s/monitoring/grafana/ingressroute.yml
   environment:
     KUBECONFIG: /etc/rancher/k3s/k3s.yaml
   changed_when: false
+  tags: [monitoring]
 
 # ============================================================
 # Phase 10: Deploy PVE exporter
@@ -282,17 +282,20 @@
     src: pve-exporter-secret.yml.j2
     dest: /tmp/pve-exporter-secret.yml
     mode: '0600'
+  tags: [monitoring]
 
 - name: Create PVE exporter secret
   command: k3s kubectl apply -f /tmp/pve-exporter-secret.yml
   environment:
     KUBECONFIG: /etc/rancher/k3s/k3s.yaml
   changed_when: false
+  tags: [monitoring]
 
 - name: Remove PVE exporter secret temp file
   file:
     path: /tmp/pve-exporter-secret.yml
     state: absent
+  tags: [monitoring]
 
 - name: Apply PVE exporter deployment and service
   command: k3s kubectl apply -f /tmp/homelab-k8s/monitoring/pve-exporter/deployment.yml
@@ -300,6 +303,7 @@
   environment:
     KUBECONFIG: /etc/rancher/k3s/k3s.yaml
   changed_when: false
+  tags: [monitoring]
 
 # ============================================================
 # Phase 11: Deploy applications
@@ -448,15 +452,11 @@
   environment:
     KUBECONFIG: /etc/rancher/k3s/k3s.yaml
 
-- name: Upgrade kube-prometheus-stack to add Loki datasource
-  command: >-
-    helm upgrade kube-prometheus-stack prometheus-community/kube-prometheus-stack
-    --namespace monitoring
-    --version {{ kube_prometheus_stack_version }}
-    --values /tmp/kube-prometheus-stack-values.yml
-    --wait --timeout 10m
-  environment:
-    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+- name: Remove kube-prometheus-stack values temp file
+  file:
+    path: /tmp/kube-prometheus-stack-values.yml
+    state: absent
+  tags: [monitoring]
 
 - name: Display deployment summary
   debug:
