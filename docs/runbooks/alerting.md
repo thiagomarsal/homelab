@@ -27,8 +27,8 @@ Path 2 — off-cluster (thin, survives cluster death)
 ```
 
 **What Path 1 covers**: everything with a metric or a log line — PVE host/guest
-state, storage, memory, Longhorn volume health, certificate expiry, and (once
-the log-shipping gap below is fixed) two kernel-level PVE symptoms. This is the
+state, storage, memory, Longhorn volume health, certificate expiry, and two
+kernel-level PVE symptoms from the journal. This is the
 detailed path: it names the specific host, guest, volume, or storage id.
 
 **What Path 2 covers**: is the fleet reachable at all, from outside the
@@ -76,8 +76,8 @@ First response assumes you're looking at the email or the Alertmanager UI at
 | `CertExpiringSoon` | A cert-manager certificate expires in under 14 days and hasn't renewed yet. | Check the DNS-01 solver and Cloudflare API token (`cloudflare_api_token` in vault). Every `*.tmf-solutions.com` route depends on the wildcard cert — this is not optional to ignore. |
 | `CertRenewalFailed` | A certificate's Ready condition is False. | Renewal is actively failing, not just slow. `kubectl describe certificate` / `kubectl describe certificaterequest` in the relevant namespace; usually a DNS-01 challenge or token problem. |
 | `CertMetricsAbsent` | cert-manager metrics have disappeared entirely. | The two cert rules above are silently dead. Check the cert-manager ServiceMonitor and that cert-manager itself is running. |
-| `PVENICHang` (Loki) | Kernel logged "Detected Hardware Unit Hang" — the e1000e TX ring wedge. | Full detail in `docs/runbooks/pve-nic-hang.md`. Host is alive but off the network; reboot is the only recovery. **Cannot fire until promtail is deployed fleet-wide and the Loki ruler is applied — see Known gaps.** |
-| `PVEKernelOOM` (Loki) | Kernel OOM-killer fired on a PVE host. | Check which guest or host process grew; not necessarily the same guest that got killed. **Cannot fire until promtail is deployed fleet-wide and the Loki ruler is applied — see Known gaps.** |
+| `PVENICHang` (Loki) | Kernel logged "Detected Hardware Unit Hang" — the e1000e TX ring wedge. | Full detail in `docs/runbooks/pve-nic-hang.md`. Host is alive but off the network; reboot is the only recovery. Threshold is >10 hangs in 10m: transient hangs self-recover (~3/day/host, driver logs `Reset adapter`), while a real wedge produced 4,658 in 2h35m with zero resets. |
+| `PVEKernelOOM` (Loki) | Kernel OOM-killer fired on a PVE host. | Check which guest or host process grew; not necessarily the same guest that got killed. Threshold is >10 hangs in 10m: transient hangs self-recover (~3/day/host, driver logs `Reset adapter`), while a real wedge produced 4,658 in 2h35m with zero resets. |
 
 ## Silencing during planned work
 
@@ -156,52 +156,66 @@ kubectl --context homelab get pods -A | grep -vE 'Running|Completed'
    architecture section above. Deferred by design; highest-value future add.
 2. **Nothing watches Uptime Kuma.** If the Kuma LXC or container dies, Path 2
    goes silent with no meta-alert to say so.
-3. **`PVENICHang` and `PVEKernelOOM` cannot fire yet — deployment, not
-   code.** The rules themselves are correct and promtail now scrapes
-   journald (not `/var/log/syslog`), but two deployment steps are still
-   outstanding: (a) `ansible/playbooks/infra/promtail-pve.yml` has only ever
-   been applied to pve01 — the rest of the fleet ships nothing to Loki yet —
-   and (b) the Loki ruler ConfigMap and StatefulSet patch documented at the
-   top of `kubernetes/monitoring/loki/ruler-rules.yml` have not been applied,
-   so even pve01's logs aren't being evaluated against these rules. Run the
-   promtail playbook against every remaining PVE host (its own verification
-   tasks fail loudly per-host if a host still isn't shipping) and apply the
-   ruler ConfigMap/StatefulSet patch to close this.
+3. **`PVENICHang` and `PVEKernelOOM` are live as of 2026-08-17.** promtail now
+   ships from all 8 PVE hosts (journald, not files) and the Loki ruler is
+   applied and evaluating. Verified by replaying the pve07 incident through
+   Loki: it peaks at 300 hangs per 10m window against a >10 threshold.
 
 ## Outstanding operator steps
 
-These require actions this implementation could not take (write access to
-vault, the n8n UI, or a browser session) and were deliberately left for a
-human:
+Deployed and verified 2026-08-17: Alertmanager is delivering email (proven with
+both synthetic and real alerts), all 17 Prometheus rules and the 3 Loki ruler
+rules are loaded and evaluating, PVE promtail ships from all 8 hosts, and
+Uptime Kuma is running on pve01. What is left:
 
-1. **Four vault vars**, if not already set — `ansible-vault encrypt_string`
-   each and paste the resulting `!vault |` blocks into
-   `ansible/inventory/group_vars/all.yml`:
-   - `alert_smtp_user` — Gmail sending address
-   - `alert_smtp_password` — Gmail app password
-   - `alert_email_to` — recipient address
-   - `alertmanager_basicauth_hash` — bcrypt hash from `htpasswd -nbB admin '<password>'`
-     (the plaintext password itself is not recoverable from git or vault —
-     keep a copy somewhere safe if Uptime Kuma or any other consumer ever
-     needs auth against the non-`/-/healthy` routes)
+1. **Uptime Kuma UI** — at `http://192.168.1.21:3001`, create the admin account,
+   add the SMTP notification (same Gmail credential as Alertmanager, subject
+   prefix `[KUMA]`), then create the 12 monitors from
+   `docs/runbooks/uptime-kuma.md`. Those monitors live only in Kuma's SQLite,
+   so that table is the reproduction path — nothing in git recreates them.
+2. **Retire the n8n `PVE Host Watchdog`** (id `bbLA156cH6tPwRlC`) once Kuma is
+   confirmed probing all 8 PVE hosts. Toggle inactive, do not delete.
+3. **No external dead-man's switch.** This is the one architectural gap left: a
+   site-wide outage (pfSense, internet, or pve01 itself) silences both alert
+   paths, and nothing watches Kuma. The `Watchdog` alert already fires
+   continuously into a null receiver, so pointing it at a Healthchecks.io ping
+   URL is nearly free whenever you want the coverage.
 
-   Also present, not a vault var: `alertmanager_basicauth_user` is plaintext
-   (`admin`) and already set in `ansible/inventory/group_vars/all.yml` — it
-   pairs with `alertmanager_basicauth_hash` above and needs no action.
-2. ~~**Fix the onboot flags** on 117/118~~ — **not needed; retracted 2026-08-17.**
-   Both already have `onboot: 1`, verified against the authoritative config in
-   pmxcfs. The original claim came from reading a *missing* `pve_onboot_status`
-   series as a zero value, which it is not. Nothing to do here.
+### Closed on 2026-08-17
 
-   Worth knowing when this alert does fire: `PVEGuestOnbootDisabled` matches
-   `pve_onboot_status == 0`, so a guest with **no** onboot series is invisible
-   to it. If you ever suspect a guest's onboot flag, check
-   `/etc/pve/nodes/<node>/qemu-server/<id>.conf` rather than trusting the metric.
-3. **Deactivate the n8n `PVE Host Watchdog` workflow** (id `bbLA156cH6tPwRlC`)
-   once Uptime Kuma is confirmed probing all 8 PVE hosts. Toggle inactive,
-   don't delete — it costs nothing dormant and preserves the SSH-probe logic
-   as a fallback.
-4. **Uptime Kuma UI setup**: the 12 monitors and the SMTP notification are
-   not stored in git (Kuma keeps them in SQLite). Follow
-   `docs/runbooks/uptime-kuma.md` to create them if this is a fresh instance
-   or a restore.
+- Four vault vars (`alert_smtp_user`, `alert_smtp_password`, `alert_email_to`,
+  `alertmanager_basicauth_hash`) — set, and the template now strips the display
+  spaces Google puts in app passwords.
+- The onboot flags on VMs 117/118 — **retracted, no action was needed**; both
+  always had `onboot: 1`. See the note in the alert table above.
+- Prometheus volume grown 8Gi → 16Gi. At 8Gi with `retentionSize: 7GB` it sat at
+  ~85% permanently, so `KubePersistentVolumeFillingUp` fired forever.
+- Traefik metrics — the old scrape job targeted `traefik.traefik.svc:9100`, a
+  port that Service has never exposed, so `TargetDown` fired forever. Traefik
+  does serve metrics on container port `metrics` (9100), so a PodMonitor
+  (`kubernetes/monitoring/traefik/podmonitor.yml`) scrapes the pods directly
+  rather than editing the release that fronts every ingress.
+- Cleanup of a retired proof-of-concept: orphaned Helm release records for
+  `minio`, `redis` and `strimzi`/`kafka` (namespaces already deleted), three PVs
+  stuck `Terminating` since 2026-06-07, and stale failed `nextcloud-cron` Jobs.
+  Note the **data directories still exist on disk** — `/mnt/storage/minio`
+  (reclaim policy was Retain) and the `local-path` directories under
+  `/var/lib/rancher/k3s/storage` — so reclaim that space by hand if you want it.
+
+## Known operational gotchas
+
+- **Changing Alertmanager's SMTP credential requires a reload.** A deploy writes
+  the new config and the sidecar rewrites `config_out`, but the running process
+  keeps the old value in memory and keeps returning `535` against a file that is
+  already correct. `curl -XPOST localhost:9093/-/reload` (via port-forward), or
+  restart the pod. Verify a credential in two seconds with
+  `python3 -c 'import smtplib...'` instead of a ten-minute deploy cycle.
+- **Gmail app passwords are exactly 16 characters.** Google shows them as four
+  groups of four; the spaces are display only. The values template strips
+  whitespace, so either form works in vault — but a value that strips to any
+  length other than 16 is wrong, and Gmail reports it as `BadCredentials`, which
+  reads like the wrong password rather than a malformed one.
+- **Loki rules are delivered by the chart's `loki-sc-rules` sidecar**, not by
+  patching the StatefulSet. Label the ConfigMap `loki_rule: "1"` and annotate it
+  `k8s-sidecar-target-directory: /rules/fake`. See the header of
+  `kubernetes/monitoring/loki/ruler-rules.yml`.

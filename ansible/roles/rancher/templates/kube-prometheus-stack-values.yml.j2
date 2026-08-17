@@ -111,9 +111,14 @@ alertmanager:
             html: {% raw %}'{{ range .Alerts }}<b>{{ .Labels.alertname }}</b><br>{{ .Annotations.summary }}<br>{{ .Annotations.description }}<br>started {{ .StartsAt }}<br><br>{{ end }}'{% endraw %}
 
 # k3s trips these permanently — a standing wall of firing alerts trains you to
-# ignore email. Provisional list from the alerting design spec — NOT yet
-# confirmed against 48h of live behaviour (Task 4's observation window has not
-# run). Revisit and adjust once that data exists.
+# ignore email.
+#
+# Validated 2026-08-17 against live behaviour: with these six disabled, the only
+# alerts firing on a healthy fleet were real findings, not group noise — a Traefik
+# scrape target that never existed, a Prometheus volume capped at ~85% by its own
+# retentionSize, stale failed Jobs, and workloads in namespaces that had been
+# deleted. Each was fixed at the source rather than by disabling another group,
+# which is the outcome this list is meant to produce.
 defaultRules:
   create: true
   rules:
@@ -155,13 +160,14 @@ prometheus:
           accessModes: ["ReadWriteOnce"]
           resources:
             requests:
-              storage: 8Gi
+              # Raised 8Gi -> 16Gi on 2026-08-17: at 8Gi with retentionSize 7GB the
+              # volume sat at ~85% permanently, so KubePersistentVolumeFillingUp fired
+              # forever. The live PVC was expanded in place (Longhorn online expansion);
+              # this keeps the template matching reality, since helm cannot shrink a PVC.
+              storage: 16Gi
     serviceMonitorSelectorNilUsesHelmValues: false
     podMonitorSelectorNilUsesHelmValues: false
     additionalScrapeConfigs:
-      - job_name: traefik
-        static_configs:
-          - targets: ["traefik.traefik.svc.cluster.local:9100"]
       - job_name: pve
         metrics_path: /pve
         params:

@@ -1,0 +1,43 @@
+---
+# Scrapes Traefik's metrics endpoint directly from its pods.
+#
+# Why a PodMonitor instead of a ServiceMonitor or a static scrape job:
+#
+# Traefik already serves Prometheus metrics on container port `metrics` (9100)
+# — the HelmChartConfig at kubernetes/system/traefik/helmchartconfig.yml sets
+# `metrics.prometheus.entryPoint: metrics` plus
+# `--entrypoints.metrics.address=:9100`, and curling localhost:9100/metrics
+# inside the pod returns real data. What was missing is that the Traefik
+# chart builds its Service from the `ports:` map, and `metrics` is not in it,
+# so svc/traefik exposes only web=80 and websecure=443.
+#
+# The old `- job_name: traefik` static scrape in
+# kube-prometheus-stack-values.yml.j2 pointed at
+# traefik.traefik.svc.cluster.local:9100 — a port that has never existed on
+# that Service — so it could never succeed and kept TargetDown firing
+# permanently. That job is removed; this replaces it.
+#
+# Adding `metrics` to the chart's `ports:` map would also work, but that means
+# editing the release fronting every ingress in the cluster (all
+# *.tmf-solutions.com traffic) to gain a metrics port. Scraping the pods
+# directly gets the same data without touching Traefik itself.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: traefik
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+spec:
+  namespaceSelector:
+    matchNames:
+      - traefik
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: traefik
+  podMetricsEndpoints:
+    # Port is referenced by NAME, not number: the container declares
+    # `metrics` (9100), and a name survives a port renumber in a chart upgrade.
+    - port: metrics
+      path: /metrics
+      interval: 30s

@@ -288,6 +288,13 @@
   changed_when: false
   tags: [monitoring]
 
+- name: Apply Traefik PodMonitor
+  command: k3s kubectl apply -f /tmp/homelab-k8s/monitoring/traefik/podmonitor.yml
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  changed_when: false
+  tags: [monitoring]
+
 - name: Apply Longhorn ServiceMonitor
   command: k3s kubectl apply -f /tmp/homelab-k8s/monitoring/longhorn/servicemonitor.yml
   environment:
