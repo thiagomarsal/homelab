@@ -469,25 +469,26 @@
 # ============================================================
 # Phase 12: Deploy Loki + Promtail (log aggregation)
 # ============================================================
-# Tagged `monitoring`, like every other task in this phase's sibling phases
-# (9/10 above). These were previously untagged, which meant a full
-# `site.yml` run — even one scoped with `--tags hoa` for an app-only
-# deploy — would still execute `helm upgrade --install loki ...` here
-# unconditionally, since untagged tasks always run regardless of --tags.
-# That matters because Loki currently has no Helm release record (see
-# kubernetes/monitoring/loki/ruler-rules.yml): running `helm upgrade
-# --install` against it fails with resources present but no release, and
-# would also risk clobbering the hand-patched ruler-rules volume/mount on
-# the live StatefulSet. Tagging this phase makes it opt-in like the rest.
+# Tagged `loki` — deliberately NOT `monitoring`. Ansible tag filtering only
+# excludes tasks when a filter is given, so an untagged `site.yml` run still
+# executes this phase exactly as before; `--tags monitoring` (the routine
+# deploy command this whole project tells the operator to use) now correctly
+# EXCLUDES it, and `--tags loki` is the explicit opt-in for this phase alone.
+# This matters because Loki has no Helm release record right now (see
+# kubernetes/monitoring/loki/ruler-rules.yml): `helm upgrade --install` here
+# fails with resources present but no release, and if it ran during a
+# routine `--tags monitoring` deploy it would abort that deploy partway
+# through and could clobber the hand-patched ruler-rules volume/mount on the
+# live StatefulSet. Reconciling or adopting the Helm release is separate work.
 - name: Add Grafana Helm repo
   command: helm repo add grafana https://grafana.github.io/helm-charts
   changed_when: false
-  tags: [monitoring]
+  tags: [loki]
 
 - name: Update Helm repos
   command: helm repo update
   changed_when: false
-  tags: [monitoring]
+  tags: [loki]
 
 - name: Install Loki (SingleBinary mode)
   command: >-
@@ -498,14 +499,14 @@
     --wait --timeout 10m
   environment:
     KUBECONFIG: /etc/rancher/k3s/k3s.yaml
-  tags: [monitoring]
+  tags: [loki]
 
 - name: Apply Loki IngressRoute
   command: k3s kubectl apply -f /tmp/homelab-k8s/monitoring/loki/ingressroute.yml
   environment:
     KUBECONFIG: /etc/rancher/k3s/k3s.yaml
   changed_when: false
-  tags: [monitoring]
+  tags: [loki]
 
 - name: Install Promtail DaemonSet (K3s pod log shipper)
   command: >-
@@ -516,7 +517,7 @@
     --wait --timeout 5m
   environment:
     KUBECONFIG: /etc/rancher/k3s/k3s.yaml
-  tags: [monitoring]
+  tags: [loki]
 
 - name: Remove kube-prometheus-stack values temp file
   file:

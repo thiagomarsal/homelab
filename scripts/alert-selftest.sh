@@ -22,7 +22,20 @@ AM="http://localhost:$PORT"
 kubectl --context "$KCTX" port-forward -n monitoring "svc/$SVC" "$PORT:9093" \
   >/dev/null 2>&1 &
 PF=$!
-trap 'kill $PF 2>/dev/null || true' EXIT
+# ID is set only by the `silence` case, once a silence has actually been
+# created and its id parsed. Checking it here (rather than registering a
+# second trap later, only after creation) means this single trap is correct
+# on every exit path from the moment the script starts: it is a no-op for
+# critical/warning/info/inhibit (ID never set), a no-op if silence creation
+# itself fails (ID still unset), and a safety-net delete for any exit after
+# creation succeeds — a failed post_alert, a failed query, Ctrl-C, or a bug —
+# so a synthetic-test silence can never outlive the script and mute real
+# alerts indefinitely.
+trap 'kill $PF 2>/dev/null || true
+  if [ -n "${ID:-}" ]; then
+    curl -sf -m5 -XDELETE "$AM/api/v2/silence/$ID" >/dev/null 2>&1 \
+      || echo "WARNING: could not delete silence $ID — DELETE IT MANUALLY: curl -XDELETE $AM/api/v2/silence/$ID" >&2
+  fi' EXIT
 
 ready=false
 for _ in $(seq 1 30); do
@@ -90,12 +103,22 @@ case "${1:?usage: critical|warning|info|inhibit|silence}" in
       \"endsAt\": \"$(date -u -d '+10 min' +%Y-%m-%dT%H:%M:%SZ)\",
       \"createdBy\": \"alert-selftest\", \"comment\": \"selftest\"
     }") || { echo "ERROR: POST $AM/api/v2/silences failed: $silence_resp" >&2; exit 1; }
+    # From here down, ID being non-empty is exactly the condition the EXIT
+    # trap above checks. If the POST above failed, or the parse below fails,
+    # ID stays unset and the trap stays a no-op — there is nothing to clean
+    # up because no silence was created (or, for a parse failure, we hold no
+    # id to delete it by; this is the one residual gap the API leaves us).
     ID=$(printf '%s' "$silence_resp" | python3 -c 'import json,sys; print(json.load(sys.stdin)["silenceID"])') \
       || { echo "ERROR: could not parse silenceID from: $silence_resp" >&2; exit 1; }
     echo "silence $ID created"
     post_alert SelfTestCritical critical ', "pve_host": "pve99"'
     sleep 5
     get_alerts_field 'silenced=true' 'silenced: '
-    curl -sf -m5 -XDELETE "$AM/api/v2/silence/$ID" && echo "silence $ID deleted"
+    if curl -sf -m5 -XDELETE "$AM/api/v2/silence/$ID" >/dev/null 2>&1; then
+      echo "silence $ID deleted"
+      ID=""  # cleared so the EXIT trap does not redundantly retry a delete that already succeeded
+    else
+      echo "WARNING: explicit delete of silence $ID failed; the exit trap will retry it" >&2
+    fi
     ;;
 esac
