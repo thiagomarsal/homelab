@@ -20,6 +20,26 @@ loki:
     retention_period: 7d
     ingestion_rate_mb: 8
     ingestion_burst_size_mb: 16
+  # Ruler: evaluates log-based alert rules (kubernetes/monitoring/loki/ruler-rules.yml)
+  # and forwards firing alerts to Alertmanager, the same as Prometheus recording
+  # rules do for metrics. This is documentation only — Loki has no Helm release
+  # record here, so this stanza is NOT currently applied via `helm upgrade`. It
+  # was instead added to the live ConfigMap by hand (`kubectl edit cm -n
+  # monitoring loki`); see the "How this gets applied" note at the top of
+  # ruler-rules.yml. Keeping it here means a future reinstall (once the Helm
+  # release is reconciled) won't silently lose the ruler config.
+  ruler:
+    enable_api: true
+    storage:
+      type: local
+      local:
+        directory: /rules
+    rule_path: /tmp/loki-rules
+    ring:
+      kvstore:
+        store: inmemory
+    alertmanager_url: http://alertmanager-operated.monitoring.svc.cluster.local:9093
+    enable_alertmanager_v2: true
 
 deploymentMode: SingleBinary
 

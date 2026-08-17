@@ -1,0 +1,89 @@
+---
+# Loki ruler rules. Mounted at /rules/fake/ — "fake" is the tenant id Loki uses
+# when auth_enabled: false.
+#
+# These cover failures that produce no metric: the e1000e TX ring hang that took
+# pve06 off the network on 2026-08-15 appears only as a kernel log line.
+#
+# How this gets applied
+# ----------------------
+# Loki has NO Helm release record here (`helm list -A --kube-context homelab`
+# shows zero loki releases, even though the resources exist and
+# ansible/roles/rancher/tasks/main.yml still contains a `helm upgrade --install
+# loki ...` task). Do not run `helm upgrade` against it: with resources present
+# but no release record it fails, and `--install` would try to create objects
+# that already exist. Until that's reconciled, apply and mount this rules
+# ConfigMap by hand:
+#
+#   export KUBECONFIG=~/.kube/config
+#
+#   # 1. Add the `ruler:` stanza documented in values.yaml (see that file) to
+#   #    the live Loki config ConfigMap so the ruler component is enabled:
+#   kubectl --context homelab edit cm -n monitoring loki
+#
+#   # 2. Apply this rules ConfigMap:
+#   kubectl --context homelab apply -f kubernetes/monitoring/loki/ruler-rules.yml
+#
+#   # 3. Mount it into the StatefulSet with a two-op JSON patch (add the
+#   #    volume, then add the matching volumeMount at /rules/fake):
+#   kubectl --context homelab patch statefulset loki -n monitoring --type=json -p='[
+#     {"op":"add","path":"/spec/template/spec/volumes/-",
+#      "value":{"name":"ruler-rules","configMap":{"name":"loki-ruler-rules"}}},
+#     {"op":"add","path":"/spec/template/spec/containers/0/volumeMounts/-",
+#      "value":{"name":"ruler-rules","mountPath":"/rules/fake"}}
+#   ]'
+#
+#   # 4. Confirm the rollout picked it up:
+#   kubectl --context homelab rollout status statefulset/loki -n monitoring --timeout=180s
+#
+# Verify the ruler loaded the rules with:
+#   kubectl --context homelab port-forward -n monitoring svc/loki 13100:3100 &
+#   curl -s localhost:13100/loki/api/v1/rules
+#
+# NOTE ON LABELS (verified read-only against the live Loki, 2026-08-17): the
+# `{job="kernel"}` selector and the `host` label below match exactly what
+# ansible/playbooks/infra/promtail-pve.yml is written to ship (job: kernel/
+# syslog/auth/pve, host: <pve inventory_hostname>). But that playbook has
+# never been run against any PVE host — live Loki's `job` label values are
+# only Kubernetes namespace/pod pairs (e.g. "monitoring/loki") plus
+# "systemd-journal", and the `host` label has zero values. These rules will
+# be silently dead (matching nothing, alerting on nothing) until
+# promtail-pve.yml is actually applied to the PVE fleet. That is a
+# deployment gap, not a labeling error in these rules — see the Task 6/7
+# report for the exact verification output.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: loki-ruler-rules
+  namespace: monitoring
+data:
+  pve-logs.yaml: |
+    groups:
+      - name: pve.kernel
+        interval: 1m
+        rules:
+          - alert: PVENICHang
+            expr: |
+              sum by (host) (
+                count_over_time({job="kernel"} |= "Detected Hardware Unit Hang" [10m])
+              ) > 0
+            for: 0m
+            labels:
+              severity: critical
+              pve_host: '{{ $labels.host }}'
+            annotations:
+              summary: "e1000e NIC hang on {{ $labels.host }}"
+              description: "Kernel reported a TX ring hang. This host drops off the network when it recurs. Mitigation is applied but the hardware fault is unrepaired."
+
+          - alert: PVEKernelOOM
+            expr: |
+              sum by (host) (
+                count_over_time({job="kernel"} |~ "Out of memory: Killed process" [15m])
+              ) > 0
+            for: 0m
+            labels:
+              severity: warning
+              pve_host: '{{ $labels.host }}'
+            annotations:
+              summary: "OOM killer fired on {{ $labels.host }}"
+              description: "A process was killed for memory. Check which guest or service grew."
