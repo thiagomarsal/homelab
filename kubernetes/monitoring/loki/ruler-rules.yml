@@ -17,24 +17,29 @@
 #
 #   export KUBECONFIG=~/.kube/config
 #
-#   # 1. Add the `ruler:` stanza documented in values.yaml (see that file) to
-#   #    the live Loki config ConfigMap so the ruler component is enabled:
+#   # 1. Complete the `ruler:` stanza in the live Loki config ConfigMap. The
+#   #    chart already ships a partial one (storage.type: local + a wal dir),
+#   #    but with no local.directory, no rule_path and — the part that matters —
+#   #    no alertmanager_url, so rules would evaluate and notify nobody:
 #   kubectl --context homelab edit cm -n monitoring loki
 #
-#   # 2. Apply this rules ConfigMap:
+#   # 2. Apply this rules ConfigMap. Its `loki_rule` label and
+#   #    k8s-sidecar-target-directory annotation are what deliver it:
 #   kubectl --context homelab apply -f kubernetes/monitoring/loki/ruler-rules.yml
 #
-#   # 3. Mount it into the StatefulSet with a two-op JSON patch (add the
-#   #    volume, then add the matching volumeMount at /rules/fake):
-#   kubectl --context homelab patch statefulset loki -n monitoring --type=json -p='[
-#     {"op":"add","path":"/spec/template/spec/volumes/-",
-#      "value":{"name":"ruler-rules","configMap":{"name":"loki-ruler-rules"}}},
-#     {"op":"add","path":"/spec/template/spec/containers/0/volumeMounts/-",
-#      "value":{"name":"ruler-rules","mountPath":"/rules/fake"}}
-#   ]'
+#   # 3. Restart Loki so it re-reads the config from step 1 (the sidecar picks
+#   #    up step 2 by itself within seconds — no restart needed for rules):
+#   kubectl --context homelab rollout restart statefulset/loki -n monitoring
+#   kubectl --context homelab rollout status  statefulset/loki -n monitoring --timeout=180s
 #
-#   # 4. Confirm the rollout picked it up:
-#   kubectl --context homelab rollout status statefulset/loki -n monitoring --timeout=180s
+# CORRECTED 2026-08-17 (at apply time). This section previously prescribed
+# adding a `ruler-rules` volume and a /rules/fake volumeMount to the
+# StatefulSet by JSON patch. Do NOT do that: the chart already mounts an
+# emptyDir named sc-rules-volume at /rules in BOTH the loki container and a
+# loki-sc-rules sidecar, so a second volume at the same path either collides
+# or is silently shadowed, and hand-patching a StatefulSet the chart owns gets
+# reverted the moment anything reconciles it. The sidecar is the supported
+# path and needs no StatefulSet change at all.
 #
 # Verify the ruler loaded the rules with:
 #   kubectl --context homelab port-forward -n monitoring svc/loki 13100:3100 &
@@ -71,6 +76,19 @@ kind: ConfigMap
 metadata:
   name: loki-ruler-rules
   namespace: monitoring
+  labels:
+    # The Loki chart runs a k8s-sidecar container (loki-sc-rules) alongside Loki
+    # with METHOD=WATCH, LABEL=loki_rule, FOLDER=/rules, sharing an emptyDir with
+    # the loki container. Carrying this label is the entire delivery mechanism —
+    # the sidecar copies this ConfigMap into /rules on its own, with no
+    # StatefulSet change and no Loki restart.
+    loki_rule: "1"
+  annotations:
+    # Loki's local rule store expects <directory>/<tenant>/, and the tenant is
+    # "fake" when auth_enabled is false. k8s-sidecar writes flat into FOLDER
+    # unless told otherwise, so this annotation puts the file in the per-tenant
+    # subdirectory the ruler actually reads.
+    k8s-sidecar-target-directory: /rules/fake
 data:
   pve-logs.yaml: |
     groups:
