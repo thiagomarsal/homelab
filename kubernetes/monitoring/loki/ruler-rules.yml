@@ -102,3 +102,22 @@ data:
             annotations:
               summary: "OOM killer fired on {{ $labels.host }}"
               description: "A process was killed for memory. Check which guest or service grew."
+
+          # Same "absence is the signal" pattern as PVEMetricsAbsent/
+          # LonghornMetricsAbsent/CertMetricsAbsent, applied to log shipping
+          # instead of a scraped metric: a dead promtail or a journal that
+          # stops being persistent silently returns the fleet to the
+          # pre-Task-10 broken state, and PVENICHang/PVEKernelOOM would go
+          # quiet with nothing saying so. NOTE: this rule cannot detect Loki
+          # itself being down — if Loki is down, this rule isn't evaluating
+          # either. That gap is Uptime Kuma's job (its prometheus/alertmanager
+          # health checks are the same idea, applied off-cluster).
+          - alert: PVELogsAbsent
+            expr: |
+              absent_over_time({job="pve-journal"}[1h])
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "No PVE journal logs reaching Loki for an hour"
+              description: "PVENICHang and PVEKernelOOM cannot fire while this is true. Check promtail on the PVE hosts: systemctl status promtail, then curl localhost:9080/metrics | grep promtail_sent_entries_total."

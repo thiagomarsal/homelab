@@ -40,3 +40,21 @@ spec:
           annotations:
             summary: "Longhorn storage on {{ $labels.node }} is {{ $value | humanizePercentage }} full"
             description: "Above 85%. Longhorn stops scheduling replicas before it fills completely."
+
+    - name: longhorn.monitoring-health
+      rules:
+        # The longhorn ServiceMonitor is new in this branch, replacing a
+        # static_configs target that pointed at the longhorn-backend
+        # ClusterIP and silently scraped one random manager pod of eight. If
+        # its selector or port name were ever wrong there would be ZERO
+        # targets, and TargetDown can't catch that (it requires a target to
+        # be down, not missing) — every Longhorn rule above would go quiet
+        # with no signal. Mirrors PVEMetricsAbsent in pve.yml.
+        - alert: LonghornMetricsAbsent
+          expr: absent(longhorn_volume_robustness)
+          for: 15m
+          labels:
+            severity: critical
+          annotations:
+            summary: "longhorn_volume_robustness has disappeared — Longhorn monitoring is blind"
+            description: "No Longhorn volume metrics are being scraped. Every Longhorn alert is silently dead. Check the longhorn ServiceMonitor selector and the longhorn-backend service."

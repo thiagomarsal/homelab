@@ -277,13 +277,31 @@ Rules, in precedence order:
    cluster-wide. Coarse on purpose — kube-state-metrics pod alerts have no
    reliable `node` label. **Trade-off:** an unrelated pod problem can hide during
    a node outage, so the runbook requires re-checking pods after recovery.
-5. `severity=critical` mutes `severity=warning` on equal `[alertname, pve_host]`.
-6. `LonghornVolumeFaulted` mutes `LonghornVolumeDegraded` on equal `volume`.
+5. `PVEStorageCritical` mutes `PVEStorageFillingUp` on equal `id` → once a
+   storage crosses 95%, the 85% warning for that same storage stops
+   duplicating it.
+6. ~~`LonghornVolumeFaulted` mutes `LonghornVolumeDegraded`~~ — deleted, not
+   built. See note below.
 
 Net effect of a host death: two emails (`PVEHostDown` + `PVEGuestDownUnexpectedly`)
 instead of roughly thirty. Alertmanager inhibition is not transitive, which is why
 `PVEHostDown` does not mute the guest alert's own inhibiting power — the guest
 alert has to survive in order to suppress the k8s cascade.
+
+**Corrected during implementation.** Item 5 as originally written —
+`severity=critical` mutes `severity=warning` on equal `[alertname, pve_host]`
+— is impossible to satisfy: no alert in this design fires at two severities
+for the same `alertname`, so that inhibit rule's source and target sides
+could never both be populated at once. The rule that actually solves the
+problem it was meant for is `PVEStorageCritical` muting
+`PVEStorageFillingUp` on equal `id` — same storage, two thresholds, is the
+one case in this design where a critical and a warning alert genuinely
+overlap. Item 6 was dropped entirely rather than replaced: per §6.2,
+`longhorn_volume_robustness` is one-hot across a `state` label, so a volume
+can only report one state at a time and `LonghornVolumeFaulted` /
+`LonghornVolumeDegraded` are already mutually exclusive by construction. An
+inhibit rule between two alerts that can never be active simultaneously can
+never fire, so it was removed rather than shipped as dead configuration.
 
 ## 8. Routing
 

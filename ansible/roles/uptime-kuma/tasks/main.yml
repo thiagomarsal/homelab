@@ -176,16 +176,31 @@
         sqlite3 /app/data/kuma.db ".backup /app/data/kuma-backup.db" \
         || fail "sqlite3 .backup failed inside the container"
 
-      INTEGRITY=$(pct exec {{ kuma_ctid }} -- sqlite3 /app/data/kuma-backup.db "PRAGMA integrity_check;") \
+      # /app/data is a Docker named volume (-v uptime-kuma:/app/data), not a
+      # path on the LXC's own filesystem — it only resolves inside the
+      # container. Running sqlite3 against it via a bare `pct exec` (no
+      # `docker exec`) would silently create a fresh 0-byte database at that
+      # nonexistent LXC path and report integrity_check "ok", having checked
+      # nothing. Same reasoning applies to getting the file out: it has to
+      # come out of the container (docker cp) before pct can pull it off the
+      # LXC.
+      INTEGRITY=$(pct exec {{ kuma_ctid }} -- docker exec uptime-kuma \
+        sqlite3 /app/data/kuma-backup.db "PRAGMA integrity_check;") \
         || fail "could not run PRAGMA integrity_check inside the container"
       if [ "$INTEGRITY" != "ok" ]; then
-        pct exec {{ kuma_ctid }} -- rm -f /app/data/kuma-backup.db
+        pct exec {{ kuma_ctid }} -- docker exec uptime-kuma rm -f /app/data/kuma-backup.db
         fail "sqlite integrity check failed (got: $INTEGRITY)"
       fi
 
-      pct pull {{ kuma_ctid }} /app/data/kuma-backup.db "$TMP" \
+      pct exec {{ kuma_ctid }} -- docker cp uptime-kuma:/app/data/kuma-backup.db /tmp/kuma-backup.db \
+        || fail "docker cp out of the uptime-kuma container failed"
+      pct pull {{ kuma_ctid }} /tmp/kuma-backup.db "$TMP" \
         || fail "pct pull failed"
-      pct exec {{ kuma_ctid }} -- rm -f /app/data/kuma-backup.db
+
+      # Clean up both copies: the one left behind inside the container's
+      # volume, and the one staged in the LXC's own /tmp.
+      pct exec {{ kuma_ctid }} -- docker exec uptime-kuma rm -f /app/data/kuma-backup.db
+      pct exec {{ kuma_ctid }} -- rm -f /tmp/kuma-backup.db
 
       if [ ! -s "$TMP" ]; then
         fail "pulled backup is empty"

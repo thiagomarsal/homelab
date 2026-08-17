@@ -94,7 +94,16 @@ case "${1:?usage: critical|warning|info|inhibit|silence}" in
     post_alert KubeNodeNotReady         warning  ', "node": "k3s-selftest"'
     sleep 5
     echo "--- alerts Alertmanager considers suppressed ---"
-    get_alerts_field 'silenced=false&inhibited=true' ''
+    # This is a real assertion, not just a printout: a self-test that cannot
+    # fail is the failure mode this whole branch exists to eliminate. If
+    # KubeNodeNotReady is missing from the inhibited set, the cascade is
+    # broken and this must exit non-zero, loudly.
+    suppressed=$(get_alerts_field 'silenced=false&inhibited=true' '') || exit 1
+    printf '%s\n' "$suppressed"
+    if ! printf '%s\n' "$suppressed" | grep -qx 'KubeNodeNotReady'; then
+      echo "ERROR: KubeNodeNotReady is not in the inhibited set — the node-down inhibition cascade is broken." >&2
+      exit 1
+    fi
     ;;
   silence)
     silence_resp=$(curl -sf -m5 -XPOST "$AM/api/v2/silences" -H 'Content-Type: application/json' -d "{

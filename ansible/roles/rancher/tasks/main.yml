@@ -547,3 +547,4 @@
       All services use wildcard TLS: *.tmf-solutions.com
       Run promtail-pve.yml to ship PVE node logs to Loki.
       ================================================
+  tags: [monitoring]

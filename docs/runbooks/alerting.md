@@ -76,8 +76,8 @@ First response assumes you're looking at the email or the Alertmanager UI at
 | `CertExpiringSoon` | A cert-manager certificate expires in under 14 days and hasn't renewed yet. | Check the DNS-01 solver and Cloudflare API token (`cloudflare_api_token` in vault). Every `*.tmf-solutions.com` route depends on the wildcard cert — this is not optional to ignore. |
 | `CertRenewalFailed` | A certificate's Ready condition is False. | Renewal is actively failing, not just slow. `kubectl describe certificate` / `kubectl describe certificaterequest` in the relevant namespace; usually a DNS-01 challenge or token problem. |
 | `CertMetricsAbsent` | cert-manager metrics have disappeared entirely. | The two cert rules above are silently dead. Check the cert-manager ServiceMonitor and that cert-manager itself is running. |
-| `PVENICHang` (Loki) | Kernel logged "Detected Hardware Unit Hang" — the e1000e TX ring wedge. | Full detail in `docs/runbooks/pve-nic-hang.md`. Host is alive but off the network; reboot is the only recovery. **Cannot fire yet — see Known gaps.** |
-| `PVEKernelOOM` (Loki) | Kernel OOM-killer fired on a PVE host. | Check which guest or host process grew; not necessarily the same guest that got killed. **Cannot fire yet — see Known gaps.** |
+| `PVENICHang` (Loki) | Kernel logged "Detected Hardware Unit Hang" — the e1000e TX ring wedge. | Full detail in `docs/runbooks/pve-nic-hang.md`. Host is alive but off the network; reboot is the only recovery. **Cannot fire until promtail is deployed fleet-wide and the Loki ruler is applied — see Known gaps.** |
+| `PVEKernelOOM` (Loki) | Kernel OOM-killer fired on a PVE host. | Check which guest or host process grew; not necessarily the same guest that got killed. **Cannot fire until promtail is deployed fleet-wide and the Loki ruler is applied — see Known gaps.** |
 
 ## Silencing during planned work
 
@@ -113,12 +113,17 @@ the unit tests in `tests/rules/`. Run this after any change to
 port-forwards to Alertmanager):
 
 ```bash
-./scripts/alert-selftest.sh critical   # posts one synthetic critical alert
-./scripts/alert-selftest.sh warning
-./scripts/alert-selftest.sh info       # proves info-level alerts route to null
-./scripts/alert-selftest.sh inhibit    # proves the node-down inhibition cascade
-./scripts/alert-selftest.sh silence    # proves silence create/mute/delete
+./scripts/alert-selftest.sh critical   # posts one synthetic critical alert — check your inbox for it
+./scripts/alert-selftest.sh warning    # posts one synthetic warning alert — check your inbox (batched, may take up to group_interval)
+./scripts/alert-selftest.sh info       # posts one synthetic info alert — check the Alertmanager UI to confirm it never emails (routes to null)
+./scripts/alert-selftest.sh inhibit    # posts, then ASSERTS: exits non-zero if the node-down inhibition cascade isn't suppressing KubeNodeNotReady
+./scripts/alert-selftest.sh silence    # posts, silences, and prints the silenced set — check the printed output, then confirm no email arrived
 ```
+
+Only `inhibit` checks its own result and fails the run if the cascade isn't
+working. `critical`, `warning`, `info`, and `silence` post the alert and
+print what they did — confirming routing (does it email, does it stay
+silent, does it land in the right inbox) requires the operator to look.
 
 Everything it posts is tagged `selftest: "true"` and uses `pve_host: pve99`
 (a host that doesn't exist), so it's safe to run against the real
@@ -151,14 +156,17 @@ kubectl --context homelab get pods -A | grep -vE 'Running|Completed'
    architecture section above. Deferred by design; highest-value future add.
 2. **Nothing watches Uptime Kuma.** If the Kuma LXC or container dies, Path 2
    goes silent with no meta-alert to say so.
-3. **`PVENICHang` and `PVEKernelOOM` cannot fire yet.** These Loki-ruler
-   rules are deployed but structurally dead: PVE 9 is Debian 13, and Debian
-   13 ships with rsyslog installed but **inactive** by default. Promtail's
-   PVE scrape config reads `/var/log/syslog` and `/var/log/kern.log`, but
-   those files are never created because nothing is writing them — kernel
-   messages on PVE 9 live only in journald. Promtail has shipped zero lines
-   from any PVE host as a result. Fixing this (point promtail at journald,
-   or reactivate rsyslog) is separate work, tracked outside this project.
+3. **`PVENICHang` and `PVEKernelOOM` cannot fire yet — deployment, not
+   code.** The rules themselves are correct and promtail now scrapes
+   journald (not `/var/log/syslog`), but two deployment steps are still
+   outstanding: (a) `ansible/playbooks/infra/promtail-pve.yml` has only ever
+   been applied to pve01 — the rest of the fleet ships nothing to Loki yet —
+   and (b) the Loki ruler ConfigMap and StatefulSet patch documented at the
+   top of `kubernetes/monitoring/loki/ruler-rules.yml` have not been applied,
+   so even pve01's logs aren't being evaluated against these rules. Run the
+   promtail playbook against every remaining PVE host (its own verification
+   tasks fail loudly per-host if a host still isn't shipping) and apply the
+   ruler ConfigMap/StatefulSet patch to close this.
 
 ## Outstanding operator steps
 
@@ -176,6 +184,10 @@ human:
      (the plaintext password itself is not recoverable from git or vault —
      keep a copy somewhere safe if Uptime Kuma or any other consumer ever
      needs auth against the non-`/-/healthy` routes)
+
+   Also present, not a vault var: `alertmanager_basicauth_user` is plaintext
+   (`admin`) and already set in `ansible/inventory/group_vars/all.yml` — it
+   pairs with `alertmanager_basicauth_hash` above and needs no action.
 2. **Fix the onboot flags**: `qm set 117 --onboot 1` on pve07 and
    `qm set 118 --onboot 1` on pve08 — k3s-worker-4/5 will not restart after a
    host reboot without this. Verify with `qm config <id> | grep onboot` on

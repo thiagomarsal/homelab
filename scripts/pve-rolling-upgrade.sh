@@ -38,8 +38,11 @@ SID=""
 # Never lets an Alertmanager problem block the upgrade: every curl here is
 # best-effort (-sf, short timeout) and every caller treats "no silence" as a
 # warning, not a reason to stop patching.
+# ClusterIP service for the kube-prometheus-stack Alertmanager, not
+# "alertmanager-operated" — see the comment in alert-selftest.sh for why this
+# branch standardized on it.
 am_start_portforward() {
-  kubectl --context "$KCTX" port-forward -n monitoring svc/alertmanager-operated \
+  kubectl --context "$KCTX" port-forward -n monitoring svc/kube-prometheus-stack-alertmanager \
     "$AM_PF_PORT:9093" >/dev/null 2>&1 &
   AM_PF_PID=$!
   for _ in $(seq 1 20); do
