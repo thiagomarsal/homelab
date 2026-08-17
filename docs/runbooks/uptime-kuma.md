@@ -72,6 +72,7 @@ enabled (see SMTP section below).
 | 10 | Ping (ICMP) | 1.1.1.1 | internet | Confirms the LXC's uplink itself is up, not just the LAN |
 | 11 | HTTP(s) | `https://grafana.tmf-solutions.com` | grafana | Accept status 200-399 |
 | 12 | HTTP(s) | `https://alertmanager.tmf-solutions.com/-/healthy` | alertmanager | No auth needed — `/-/healthy` has its own unauthenticated IngressRoute (Task 9) |
+| 13 | **Keyword** | `https://192.168.1.61/` + header `Host: auburn-fields.com` | HOA site (auburn-fields) | Keyword `Auburn Fields`, `ignore_tls` on. See note below — this one is deliberately not a plain status check |
 
 The 10 ICMP checks (#1-10) deliberately target hardcoded IPs, not hostnames.
 This keeps the probe path free of DNS, Traefik, and k3s — none of those need
@@ -112,6 +113,29 @@ basic-auth password is only recoverable as a bcrypt hash
 (`alertmanager_basicauth_hash` in vault) — the plaintext is not recoverable
 from git or vault at all — so having Kuma hold a copy of it would have been a
 second, unrecoverable-if-lost place for that credential to live.
+
+### Why the HOA monitor is a keyword check against the ingress IP
+
+Two deliberate choices, both learned from the 2026-08-17 outage:
+
+**Keyword, not status.** When mariadb is down, WordPress frequently still answers
+HTTP 200 while serving a database-error page. A status-only check would call that
+healthy. The monitor therefore requires the string `Auburn Fields` (from the page
+title) to appear in the response.
+
+**Ingress IP + Host header, not the public hostname.** `auburn-fields.com` resolves
+to Cloudflare (`2606:4700:…`), so checking that name tests Cloudflare's edge and your
+uplink as well as the site — it would go red during an internet outage even though the
+cluster is serving fine, and Kuma's job is watching *your fleet*. Probing
+`https://192.168.1.61/` with a `Host:` header hits Traefik directly, so this monitor
+answers "is the cluster serving the HOA site" rather than "can the world reach it".
+`ignore_tls` is on because connecting by IP sends the wrong SNI for the
+auburn-fields.com certificate.
+
+If you also want the resident's-eye view, add a second monitor on
+`https://auburn-fields.com` — it is genuinely a different question, and both are worth
+having. `hoa.tmf-solutions.com` is not usable for this: it does not resolve locally and
+301s to the public domain anyway.
 
 ## How these monitors were created (2026-08-17)
 
