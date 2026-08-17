@@ -77,18 +77,41 @@ data:
       - name: pve.kernel
         interval: 1m
         rules:
+          # Threshold calibrated against real fleet data on 2026-08-17, not guessed.
+          #
+          # A single hang is NOT the failure — mitigated hosts (pve05/06/07) log ~3 per day
+          # and the driver recovers each one with a "Reset adapter". Alerting on any hang
+          # would mean roughly a dozen self-healing emails a day across four hosts, which
+          # is how an inbox becomes noise.
+          #
+          # The catastrophic mode looks completely different. When pve07 wedged that day it
+          # logged 4,658 hangs in 2h35m — a steady 1,800/hour, one every 2 seconds — with
+          # ZERO reset attempts, and stayed off the network until it was power-cycled. That
+          # is ~300 hangs per 10m window versus 1-3 for a transient, so the two are three
+          # orders of magnitude apart and any threshold in between separates them cleanly.
+          #
+          # 10 is deliberately near the bottom of that gap: it cannot be reached by the
+          # normal transient pattern, and a genuine wedge crosses it within ~20 seconds.
           - alert: PVENICHang
             expr: |
               sum by (host) (
                 count_over_time({job="pve-journal"} |= "Detected Hardware Unit Hang" [10m])
-              ) > 0
+              ) > 10
             for: 0m
             labels:
               severity: critical
               pve_host: '{{ $labels.host }}'
             annotations:
-              summary: "e1000e NIC hang on {{ $labels.host }}"
-              description: "Kernel reported a TX ring hang. This host drops off the network when it recurs. Mitigation is applied but the hardware fault is unrepaired."
+              summary: "e1000e NIC wedged on {{ $labels.host }} — sustained TX ring hangs"
+              description: >-
+                More than 10 hangs in 10 minutes means the TX ring is stuck rather than
+                blipping. On 2026-08-17 this pattern took pve07 off the network for 2h35m
+                and only a power cycle recovered it; the driver logged no reset attempts.
+                Check whether the host is still reachable at all — it will keep running and
+                logging while shipping no packets. Confirm the offload mitigation is active
+                (systemctl is-enabled e1000e-offload-fix.service; ethtool -k <iface> should
+                show tcp/generic-segmentation-offload off), and expect a power cycle if the
+                NIC has already stopped responding to ARP.
 
           - alert: PVEKernelOOM
             expr: |
