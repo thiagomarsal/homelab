@@ -40,17 +40,32 @@
 #   kubectl --context homelab port-forward -n monitoring svc/loki 13100:3100 &
 #   curl -s localhost:13100/loki/api/v1/rules
 #
-# NOTE ON LABELS (verified read-only against the live Loki, 2026-08-17): the
-# `{job="kernel"}` selector and the `host` label below match exactly what
-# ansible/playbooks/infra/promtail-pve.yml is written to ship (job: kernel/
-# syslog/auth/pve, host: <pve inventory_hostname>). But that playbook has
-# never been run against any PVE host — live Loki's `job` label values are
-# only Kubernetes namespace/pod pairs (e.g. "monitoring/loki") plus
-# "systemd-journal", and the `host` label has zero values. These rules will
-# be silently dead (matching nothing, alerting on nothing) until
-# promtail-pve.yml is actually applied to the PVE fleet. That is a
-# deployment gap, not a labeling error in these rules — see the Task 6/7
-# report for the exact verification output.
+# NOTE ON LABELS (updated 2026-08-17, Task 10): ansible/playbooks/infra/
+# promtail-pve.yml now ships PVE logs from journald, not from /var/log files
+# — PVE 9 is Debian 13 (trixie), rsyslog is not enabled there by default, and
+# the old file-based config was scraping paths that never existed, so it
+# shipped nothing to any host, ever. The journal-based config emits a single
+# stream per host labeled `job="pve-journal"`, `host="<pve inventory_hostname>"`
+# (e.g. pve01…pve08 — set explicitly from inventory_hostname, not the
+# journal's own `_HOSTNAME` field, so it lines up with the `pve_host` values
+# the Prometheus rules and Alertmanager inhibition already use). The rules
+# below match on `job="pve-journal"` and message text only, deliberately not
+# on a `syslog_identifier` relabel, since a wrong guess there would make the
+# rule go silent again for no visible reason while the message strings
+# themselves are already distinctive enough.
+#
+# This is STILL a deployment gap, not (as far as could be verified read-only)
+# a labeling error: promtail-pve.yml has only ever been applied to pve01, and
+# pve05 has no /etc/promtail and an inactive promtail service, so most of the
+# fleet ships nothing regardless of which scrape config is correct. These
+# rules remain inert — matching nothing, alerting on nothing — until an
+# operator (a) runs promtail-pve.yml against every PVE host (its own
+# verification tasks will fail loudly per-host if a host still isn't
+# shipping), and (b) applies the ruler ConfigMap/StatefulSet patch documented
+# above, since Loki has no Helm release record here and neither step happens
+# via a normal `helm upgrade`. The exact label values above could not be
+# confirmed against a live shipping stream without applying the playbook —
+# see the Task 10 report for what was and wasn't verified read-only.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -65,7 +80,7 @@ data:
           - alert: PVENICHang
             expr: |
               sum by (host) (
-                count_over_time({job="kernel"} |= "Detected Hardware Unit Hang" [10m])
+                count_over_time({job="pve-journal"} |= "Detected Hardware Unit Hang" [10m])
               ) > 0
             for: 0m
             labels:
@@ -78,7 +93,7 @@ data:
           - alert: PVEKernelOOM
             expr: |
               sum by (host) (
-                count_over_time({job="kernel"} |~ "Out of memory: Killed process" [15m])
+                count_over_time({job="pve-journal"} |~ "Out of memory: Killed process" [15m])
               ) > 0
             for: 0m
             labels:

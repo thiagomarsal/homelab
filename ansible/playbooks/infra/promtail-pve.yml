@@ -1,6 +1,16 @@
 ---
-# Installs Promtail on each Proxmox VE node to ship syslogs to Loki.
-# Ships: syslog, kernel, auth, pve-related journal entries.
+# Installs Promtail on each Proxmox VE node to ship logs to Loki.
+#
+# Ships: the systemd/kernel journal (journald), as a single `job=pve-journal`
+# stream per host. PVE 9 is Debian 13 (trixie), where rsyslog is not enabled
+# by default, so /var/log/syslog, /var/log/kern.log, /var/log/auth.log and
+# /var/log/pve/*.log do not exist — an earlier, file-based version of this
+# playbook scraped those paths and shipped nothing, on every host, forever,
+# with no error. Kernel, auth, and PVE task-log messages all land in journald
+# regardless, so scraping the journal directly (the same approach the
+# in-cluster promtail DaemonSet already uses successfully — see
+# kubernetes/monitoring/promtail/values.yaml) is what actually works here.
+#
 # Requires: Loki IngressRoute deployed and accessible at loki.tmf-solutions.com.
 - name: Install Promtail on PVE nodes
   hosts: pve
@@ -59,38 +69,50 @@
             - url: {{ loki_push_url }}
 
           scrape_configs:
-            - job_name: syslog
-              static_configs:
-                - targets: [localhost]
-                  labels:
-                    job: syslog
-                    host: {{ inventory_hostname }}
-                    __path__: /var/log/syslog
-
-            - job_name: kernel
-              static_configs:
-                - targets: [localhost]
-                  labels:
-                    job: kernel
-                    host: {{ inventory_hostname }}
-                    __path__: /var/log/kern.log
-
-            - job_name: auth
-              static_configs:
-                - targets: [localhost]
-                  labels:
-                    job: auth
-                    host: {{ inventory_hostname }}
-                    __path__: /var/log/auth.log
-
-            - job_name: pve
-              static_configs:
-                - targets: [localhost]
-                  labels:
-                    job: pve
-                    host: {{ inventory_hostname }}
-                    __path__: /var/log/pve/*.log
+            - job_name: journal
+              journal:
+                path: /var/log/journal
+                max_age: 12h
+                labels:
+                  job: pve-journal
+                  host: {{ inventory_hostname }}
+              relabel_configs:
+                - source_labels: ['__journal__systemd_unit']
+                  target_label: unit
+                - source_labels: ['__journal_syslog_identifier']
+                  target_label: syslog_identifier
+                - source_labels: ['__journal_priority_keyword']
+                  target_label: priority
       notify: restart promtail
+
+    # --- Fallback: rsyslog + file-based scraping -----------------------------
+    # Use this ONLY if the verification tasks below fail because promtail's
+    # binary lacks journal support (message: "promtail built without journal
+    # support"). journald reading requires promtail to be linked against
+    # libsystemd/libjournal at build time; the upstream .deb has historically
+    # varied on this, and it could not be confirmed read-only on this fleet
+    # (pve01's binary is static, so `ldd` shows nothing either way).
+    #
+    # If that turns out to be the case: install rsyslog so it populates
+    # /var/log/syslog, /var/log/kern.log, and /var/log/auth.log again (PVE task
+    # logs still won't reappear under /var/log/pve on trixie without further
+    # rsyslog config), then revert the "Write Promtail config" task above to
+    # the file-based scrape_configs this playbook used before this change, and
+    # revert kubernetes/monitoring/loki/ruler-rules.yml's job selectors back to
+    # job="kernel" et al.
+    #
+    # - name: "[FALLBACK] Install rsyslog"
+    #   apt:
+    #     name: rsyslog
+    #     state: present
+    #     update_cache: true
+    #
+    # - name: "[FALLBACK] Enable and start rsyslog"
+    #   systemd:
+    #     name: rsyslog
+    #     enabled: true
+    #     state: restarted
+    # --------------------------------------------------------------------
 
     - name: Install Promtail systemd service
       copy:
@@ -115,8 +137,56 @@
       systemd:
         name: promtail
         enabled: true
-        state: started
+        state: restarted
         daemon_reload: true
+
+    # --- Verification: prove promtail is actually shipping entries ----------
+    # The failure mode this playbook has already hit once is silent: the
+    # service reports active, the config parses, targets log "Adding target",
+    # and yet nothing is ever pushed to Loki. Don't trust "started" — check
+    # the metric that only increments once a log line is read AND sent.
+    - name: Confirm Promtail service is active
+      command: systemctl is-active promtail
+      register: promtail_active
+      changed_when: false
+      failed_when: promtail_active.stdout != "active"
+
+    - name: Wait for Promtail to read and push journal entries
+      pause:
+        seconds: 15
+
+    - name: Read Promtail metrics
+      uri:
+        url: "http://localhost:9080/metrics"
+        return_content: true
+      register: promtail_metrics
+
+    - name: Extract promtail_sent_entries_total
+      set_fact:
+        promtail_sent_entries: >-
+          {{
+            promtail_metrics.content
+            | regex_findall('^promtail_sent_entries_total\{[^}]*\}\s+([0-9.e+]+)', multiline=True)
+            | map('float')
+            | sum
+          }}
+
+    - name: Fail loudly if Promtail has not actually shipped anything
+      fail:
+        msg: >-
+          Promtail on {{ inventory_hostname }} is active but
+          promtail_sent_entries_total is {{ promtail_sent_entries }} (0 or
+          metric absent) 15s after restart. Config parsing and "service
+          active" do NOT mean logs are shipping — this is the exact silent
+          failure this playbook was rewritten to catch. Likely causes:
+          (1) this promtail binary was built without journal support, in
+          which case switch to the commented-out rsyslog fallback block in
+          this playbook and revert to file-based scrape_configs; or
+          (2) /var/log/journal is missing, empty, or unreadable by the
+          promtail process on this host — check with `journalctl -k -n5`
+          and `ls -la /var/log/journal` as root. Do not consider this host's
+          log shipping working until promtail_sent_entries_total is nonzero.
+      when: (promtail_sent_entries | float(0)) == 0
 
   handlers:
     - name: restart promtail
