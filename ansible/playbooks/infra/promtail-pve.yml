@@ -81,9 +81,8 @@
                   target_label: unit
                 - source_labels: ['__journal_syslog_identifier']
                   target_label: syslog_identifier
-                - source_labels: ['__journal_priority_keyword']
+                - source_labels: ['__journal_priority']
                   target_label: priority
-      notify: restart promtail
 
     # --- Fallback: rsyslog + file-based scraping -----------------------------
     # Use this ONLY if the verification tasks below fail because promtail's
@@ -131,8 +130,14 @@
 
           [Install]
           WantedBy=multi-user.target
-      notify: restart promtail
 
+    # This is the ONLY restart in the play (no handler-based restart exists
+    # any more — see the note above this task's neighbours). It runs
+    # unconditionally, so both a first-time install (pve05) and a config
+    # change on an existing host (pve01) always end up with a promtail
+    # process running the config just written, and the verification block
+    # immediately below is checking that exact process, not one that gets
+    # replaced by a deferred handler restart afterward.
     - name: Enable and start Promtail
       systemd:
         name: promtail
@@ -160,6 +165,21 @@
         url: "http://localhost:9080/metrics"
         return_content: true
       register: promtail_metrics
+      failed_when: false
+
+    - name: Fail loudly if Promtail is not answering on :9080 at all
+      fail:
+        msg: >-
+          Promtail on {{ inventory_hostname }} passed the "systemctl
+          is-active" check but http://localhost:9080/metrics did not answer
+          with 200 15s after restart (got: {{ promtail_metrics.status |
+          default('no response') }}). This is a different failure shape than
+          "shipped zero entries" — the process is not serving its metrics
+          endpoint at all, which usually means it crashed or hung
+          immediately after the restart (check `journalctl -u promtail -n50`
+          as root) rather than a journal-support or /var/log/journal
+          problem.
+      when: promtail_metrics.status is not defined or promtail_metrics.status != 200
 
     - name: Extract promtail_sent_entries_total
       set_fact:
@@ -187,10 +207,3 @@
           and `ls -la /var/log/journal` as root. Do not consider this host's
           log shipping working until promtail_sent_entries_total is nonzero.
       when: (promtail_sent_entries | float(0)) == 0
-
-  handlers:
-    - name: restart promtail
-      systemd:
-        name: promtail
-        state: restarted
-        daemon_reload: true
