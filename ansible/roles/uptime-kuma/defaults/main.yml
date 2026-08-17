@@ -1,0 +1,30 @@
+---
+kuma_ctid: 102
+kuma_hostname: uptime-kuma
+kuma_ip: "192.168.1.21"
+kuma_gateway: "192.168.1.1"
+kuma_cidr: 24
+kuma_cores: 1
+kuma_memory_mb: 512
+kuma_disk_gb: 4
+kuma_bridge: vmbr0
+kuma_storage: local-lvm
+
+# Verified read-only against pve01 on 2026-08-17 (`pveam list local`): the
+# brief's original debian-12-standard_12.7-1_amd64.tar.zst is NOT present.
+# pve01 is a PVE 9 host (Debian 13/trixie) and its local template cache has
+# both a Debian 12 and a Debian 13 image, but at a different Debian 12 patch
+# level than the brief assumed:
+#   local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst
+#   local:vztmpl/debian-13-standard_13.1-2_amd64.tar.zst
+# Debian 12 (bookworm) is used deliberately, not Debian 13: the Docker
+# install task below pins the Docker apt repo to the "bookworm" suite, and
+# mixing a trixie container with bookworm-built docker-ce/containerd.io
+# packages risks a libc/openssl ABI mismatch. Bookworm-in-bookworm keeps that
+# task's suite name correct. Kept as a variable, per the task-8 brief, so a
+# future run can switch to Debian 13 once the Docker task's suite name is
+# updated to match.
+kuma_template: "local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst"
+
+kuma_image: "louislam/uptime-kuma:1"
+kuma_port: 3001

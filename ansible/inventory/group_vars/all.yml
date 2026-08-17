@@ -167,6 +167,10 @@ hoa_db_root_password: !vault |
 # LXC container IPs (external to K3s, proxied via ClusterIP services)
 immich_lxc_ip: "192.168.1.20"
 
+# Uptime Kuma — off-cluster watcher, LXC on pve01
+kuma_lxc_host: pve01
+kuma_hostname_fqdn: "uptime.tmf-solutions.com"
+
 # Redis password for video pipeline (prototype — change before production)
 redis_password: !vault |
           $ANSIBLE_VAULT;1.1;AES256

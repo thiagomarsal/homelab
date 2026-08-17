@@ -1,0 +1,151 @@
+---
+# Creates the Uptime Kuma LXC on a PVE host and runs Kuma in Docker inside it.
+# This is the off-cluster watcher: every other monitor in this alerting design
+# (Prometheus rules, Alertmanager, Loki ruler rules) lives inside the k3s
+# cluster it watches, so it dies with the thing it's supposed to report on.
+# This LXC lives on bare-metal Proxmox instead, deliberately outside k3s.
+#
+# Docker inside an unprivileged LXC needs nesting=1 and keyctl=1 — without
+# both, the Docker daemon fails to start with a cgroup or keyring error.
+#
+# onboot=1 is deliberate and load-bearing: a watcher that does not come back
+# after a host reboot is worse than no watcher, because its silence reads as
+# "everything is fine". (Two of this fleet's k3s VMs are currently
+# misconfigured exactly this way — do not repeat that here.)
+
+- name: Check whether the Kuma container already exists
+  command: pct status {{ kuma_ctid }}
+  register: kuma_status
+  failed_when: false
+  changed_when: false
+
+- name: Create the Kuma LXC
+  command: >-
+    pct create {{ kuma_ctid }} {{ kuma_template }}
+    --hostname {{ kuma_hostname }}
+    --cores {{ kuma_cores }}
+    --memory {{ kuma_memory_mb }}
+    --rootfs {{ kuma_storage }}:{{ kuma_disk_gb }}
+    --net0 name=eth0,bridge={{ kuma_bridge }},ip={{ kuma_ip }}/{{ kuma_cidr }},gw={{ kuma_gateway }}
+    --features nesting=1,keyctl=1
+    --onboot 1
+    --unprivileged 1
+    --start 1
+  when: kuma_status.rc != 0
+
+- name: Wait for the container to answer
+  command: pct exec {{ kuma_ctid }} -- true
+  register: kuma_ready
+  retries: 15
+  delay: 4
+  until: kuma_ready.rc == 0
+  changed_when: false
+
+# The brief's original guard here was `args: creates: /dev/null`, which is
+# wrong: /dev/null always exists on any Linux system, so that condition is
+# permanently true and the install task would ALWAYS be skipped — a freshly
+# created container would never get Docker installed at all. Guard on
+# whether the real target binary exists instead, checked read-only via a
+# separate registered task, so a re-run of this role is a safe no-op once
+# Docker is present and still installs it the first time.
+- name: Check whether Docker is already installed in the container
+  command: pct exec {{ kuma_ctid }} -- test -x /usr/bin/docker
+  register: kuma_docker_present
+  failed_when: false
+  changed_when: false
+
+- name: Install Docker and sqlite3 inside the container
+  command: >-
+    pct exec {{ kuma_ctid }} -- bash -lc
+    "apt-get update -qq &&
+     DEBIAN_FRONTEND=noninteractive apt-get install -y -qq
+     ca-certificates curl gnupg sqlite3 iputils-ping &&
+     install -m 0755 -d /etc/apt/keyrings &&
+     curl -fsSL https://download.docker.com/linux/debian/gpg
+       -o /etc/apt/keyrings/docker.asc &&
+     chmod a+r /etc/apt/keyrings/docker.asc &&
+     echo 'deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc]
+       https://download.docker.com/linux/debian bookworm stable'
+       > /etc/apt/sources.list.d/docker.list &&
+     apt-get update -qq &&
+     DEBIAN_FRONTEND=noninteractive apt-get install -y -qq
+     docker-ce docker-ce-cli containerd.io"
+  when: kuma_docker_present.rc != 0
+  register: docker_install
+  changed_when: "'Setting up docker-ce' in docker_install.stdout"
+
+- name: Run the Uptime Kuma container
+  command: >-
+    pct exec {{ kuma_ctid }} -- bash -lc
+    "docker inspect uptime-kuma >/dev/null 2>&1 ||
+     docker run -d --restart=always
+       -p {{ kuma_port }}:3001
+       -v uptime-kuma:/app/data
+       --name uptime-kuma {{ kuma_image }}"
+  register: kuma_run
+  changed_when: "'Error' not in kuma_run.stderr"
+
+- name: Install the nightly Kuma database backup
+  copy:
+    dest: /etc/cron.daily/kuma-db-backup
+    mode: '0755'
+    content: |
+      #!/bin/sh
+      # Kuma keeps every monitor definition in SQLite, outside git. This is
+      # the only thing standing between a pve01 loss and re-clicking 12
+      # monitors by hand.
+      #
+      # `set -e` alone is not sufficient to guarantee we never clobber a
+      # good backup with a bad one: `pct pull` can leave a partial file
+      # behind if it fails partway, and because the destination filename is
+      # dated (one per day), a failed *same-day* rerun would land on top of
+      # that day's already-good backup. So: verify the sqlite copy's
+      # integrity *inside* the container before pulling anything, pull to a
+      # hidden temp file, verify it is non-empty, and only then atomically
+      # `mv` it over the final dated name. Retention is handled by deleting
+      # anything older than 7 days by mtime.
+      #
+      # Date format uses a single '%' (e.g. %Y%m%d) deliberately, not '%%'.
+      # This content is rendered once by Ansible's `copy` module — which
+      # only interprets Jinja2 ({{ }} / {% %}), not printf/date-style '%'
+      # escaping — so a lone '%' is not "eaten" by Ansible and reaches the
+      # shell's `date` command unchanged. Doubling it (`%%Y%%m%%d`) would
+      # survive Ansible identically, but GNU date then interprets each `%%`
+      # as a literal '%' character, producing the literal filename
+      # "kuma-%Y%m%d.db" every single night instead of a real date — so
+      # every run would overwrite the same one file and the 7-day retention
+      # below would have nothing to do.
+      set -e
+
+      DEST=/var/lib/vz/dump/kuma
+      mkdir -p "$DEST"
+
+      STAMP=$(date +%Y%m%d)
+      TMP="$DEST/.kuma-$STAMP.db.tmp"
+      FINAL="$DEST/kuma-$STAMP.db"
+
+      pct exec {{ kuma_ctid }} -- docker exec uptime-kuma \
+        sqlite3 /app/data/kuma.db ".backup /app/data/kuma-backup.db"
+
+      INTEGRITY=$(pct exec {{ kuma_ctid }} -- sqlite3 /app/data/kuma-backup.db "PRAGMA integrity_check;")
+      if [ "$INTEGRITY" != "ok" ]; then
+        echo "kuma-db-backup: sqlite integrity check failed (got: $INTEGRITY), aborting" >&2
+        pct exec {{ kuma_ctid }} -- rm -f /app/data/kuma-backup.db
+        exit 1
+      fi
+
+      pct pull {{ kuma_ctid }} /app/data/kuma-backup.db "$TMP"
+      pct exec {{ kuma_ctid }} -- rm -f /app/data/kuma-backup.db
+
+      if [ ! -s "$TMP" ]; then
+        echo "kuma-db-backup: pulled backup is empty, aborting" >&2
+        rm -f "$TMP"
+        exit 1
+      fi
+
+      mv "$TMP" "$FINAL"
+      find "$DEST" -name 'kuma-*.db' -mtime +7 -delete
+
+- name: Report how to reach Kuma
+  debug:
+    msg: "Uptime Kuma: http://{{ kuma_ip }}:{{ kuma_port }} — first visit creates the admin account"

@@ -1,0 +1,8 @@
+---
+# Off-cluster watcher for the fleet. Deliberately NOT in the k3s cluster: every
+# in-cluster monitor dies with the thing it is supposed to report on.
+- name: Provision the Uptime Kuma LXC
+  hosts: "{{ kuma_lxc_host | default('pve01') }}"
+  gather_facts: false
+  roles:
+    - uptime-kuma
