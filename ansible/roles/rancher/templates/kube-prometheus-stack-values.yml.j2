@@ -19,9 +19,6 @@ prometheus:
     serviceMonitorSelectorNilUsesHelmValues: false
     podMonitorSelectorNilUsesHelmValues: false
     additionalScrapeConfigs:
-      - job_name: longhorn
-        static_configs:
-          - targets: ["longhorn-backend.longhorn-system.svc.cluster.local:9500"]
       - job_name: traefik
         static_configs:
           - targets: ["traefik.traefik.svc.cluster.local:9100"]

@@ -1,0 +1,26 @@
+---
+# Scrapes every longhorn-manager pod individually.
+#
+# The previous config was a static_configs target pointing at the longhorn-backend
+# ClusterIP, so each scrape landed on one random manager pod out of eight: per-node
+# storage series showed 1 of 8 nodes, and per-volume series appeared and vanished
+# depending on which pod answered. A ServiceMonitor resolves the service's endpoints,
+# so all managers are scraped every interval.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: longhorn
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+spec:
+  namespaceSelector:
+    matchNames:
+      - longhorn-system
+  selector:
+    matchLabels:
+      app: longhorn-manager
+  endpoints:
+    - port: manager
+      interval: 30s
+      path: /metrics

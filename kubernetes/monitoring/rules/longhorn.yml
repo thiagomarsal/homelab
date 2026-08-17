@@ -1,5 +1,6 @@
 ---
-# Longhorn robustness encoding: 0=unknown, 1=healthy, 2=degraded, 3=faulted.
+# Longhorn volume robustness metric is one-hot across a 'state' label.
+# Match {state="<name>"} == 1 rather than comparing to an enum value.
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
@@ -12,7 +13,7 @@ spec:
     - name: longhorn.volumes
       rules:
         - alert: LonghornVolumeFaulted
-          expr: longhorn_volume_robustness == 3
+          expr: longhorn_volume_robustness{state="faulted"} == 1
           for: 1m
           labels:
             severity: critical
@@ -22,7 +23,7 @@ spec:
 
         # 20m rides out the rebuild churn a rolling host upgrade always causes.
         - alert: LonghornVolumeDegraded
-          expr: longhorn_volume_robustness == 2
+          expr: longhorn_volume_robustness{state="degraded"} == 1
           for: 20m
           labels:
             severity: warning
