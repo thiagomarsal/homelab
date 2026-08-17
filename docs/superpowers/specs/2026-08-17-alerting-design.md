@@ -118,8 +118,16 @@ Facts established by querying Prometheus directly, which shaped the rules:
 - **`pve_onboot_status` is a reliable guest-down guard.** Currently down and
   correctly excluded by it: `qemu/9007`, `qemu/9008` (VM templates) and `lxc/100`
   (immich, intentionally stopped). Zero false positives today.
-- **`qemu/117` and `qemu/118` have `onboot=0`** — k3s-worker-4/5 will not restart
-  after a pve07/pve08 reboot. Latent bug, fixed as part of this work.
+- ~~**`qemu/117` and `qemu/118` have `onboot=0`**~~ — **RETRACTED 2026-08-17.** This was
+  wrong. It was inferred from `pve_onboot_status` having no series for those two guests,
+  and absence of a series was read as a value of zero. Reading the authoritative config
+  from pmxcfs (`/etc/pve/nodes/*/qemu-server/*.conf`) shows **117 and 118 both have
+  `onboot: 1`**, as do all other non-template guests except `lxc/100` (immich,
+  intentionally stopped). No fix was needed and none was applied.
+  The lesson is the one this whole document is about: a missing metric is not a
+  measurement. `PVEGuestOnbootDisabled` compares `pve_onboot_status == 0`, so a guest whose
+  onboot series is absent is invisible to it — the same blind spot, now in a rule rather
+  than in prose.
 - **pve03 `local-lvm` is at 0.01%, not 95%.** The old capacity problem is gone;
   content moved to `ssd-storage` (55%). Highest fill in the fleet is pve01 and
   pve02 `local-lvm` at ~72%, so an 85% warning threshold is quiet but meaningful.

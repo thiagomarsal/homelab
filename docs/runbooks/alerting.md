@@ -188,10 +188,15 @@ human:
    Also present, not a vault var: `alertmanager_basicauth_user` is plaintext
    (`admin`) and already set in `ansible/inventory/group_vars/all.yml` — it
    pairs with `alertmanager_basicauth_hash` above and needs no action.
-2. **Fix the onboot flags**: `qm set 117 --onboot 1` on pve07 and
-   `qm set 118 --onboot 1` on pve08 — k3s-worker-4/5 will not restart after a
-   host reboot without this. Verify with `qm config <id> | grep onboot` on
-   each host; `PVEGuestOnbootDisabled` should clear within an hour of the fix.
+2. ~~**Fix the onboot flags** on 117/118~~ — **not needed; retracted 2026-08-17.**
+   Both already have `onboot: 1`, verified against the authoritative config in
+   pmxcfs. The original claim came from reading a *missing* `pve_onboot_status`
+   series as a zero value, which it is not. Nothing to do here.
+
+   Worth knowing when this alert does fire: `PVEGuestOnbootDisabled` matches
+   `pve_onboot_status == 0`, so a guest with **no** onboot series is invisible
+   to it. If you ever suspect a guest's onboot flag, check
+   `/etc/pve/nodes/<node>/qemu-server/<id>.conf` rather than trusting the metric.
 3. **Deactivate the n8n `PVE Host Watchdog` workflow** (id `bbLA156cH6tPwRlC`)
    once Uptime Kuma is confirmed probing all 8 PVE hosts. Toggle inactive,
    don't delete — it costs nothing dormant and preserves the SSH-probe logic
