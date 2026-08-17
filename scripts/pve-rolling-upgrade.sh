@@ -125,6 +125,26 @@ for h in "${HOSTS[@]}"; do
     echo "Remaining hosts not attempted: ${HOSTS[*]}" >&2
     exit 1
   fi
+  # Re-assert the e1000e offload mitigation on every reboot, for every host.
+  #
+  # This is deliberately unconditional rather than a one-off task someone
+  # remembers. The playbook already existed when pve07 joined the cluster, but
+  # had only ever been run with --limit pve06 -- so pve07 ran unmitigated and
+  # wedged its TX ring on 2026-08-17, dark for 2h35m until a power cycle. Any
+  # host that joins later inherits the same gap unless something re-applies it.
+  #
+  # The playbook skips hosts with no e1000e NIC (meta: end_host), and installs a
+  # systemd unit that reapplies at boot, so this is idempotent and cheap. It runs
+  # after the host is back but before the health gate, so a NIC reconfigure
+  # happens while this host is already the one being worked on.
+  #
+  # It must never abort the fleet upgrade: patching matters more than an offload
+  # flag, and a failure here is worth a warning, not a half-upgraded fleet.
+  if ! ansible-playbook playbooks/infra/nic-offload-fix.yml --limit "$h"; then
+    echo "   WARNING: could not apply the e1000e offload mitigation on $h" >&2
+    echo "   (continuing: patching takes priority; re-run nic-offload-fix.yml --limit $h later)" >&2
+  fi
+
   log "$h back up; waiting for k3s + Longhorn to settle before the next host"
   if ! wait_cluster_healthy; then
     am_silence_delete "$SID"
