@@ -124,7 +124,13 @@ Facts established by querying Prometheus directly, which shaped the rules:
   content moved to `ssd-storage` (55%). Highest fill in the fleet is pve01 and
   pve02 `local-lvm` at ~72%, so an 85% warning threshold is quiet but meaningful.
 - **cert-manager is not scraped at all.** No `certmanager_*` metrics exist; a
-  ServiceMonitor is required before any certificate rule can work.
+  ServiceMonitor is required before any certificate rule can work. Its controller
+  Service names the metrics port **`tcp-prometheus-servicemonitor`** — not
+  `http-metrics`, which belongs to the *cainjector* Service. A ServiceMonitor using
+  the wrong port name selects the right Service and then resolves zero endpoints,
+  silently. (Metric names verified live: `certmanager_certificate_expiration_timestamp_seconds`
+  and `certmanager_certificate_ready_status{condition="False"}` both exist on v1.16.3,
+  and `== 1` on the latter is the correct "not ready" trigger.)
 - Available and used: `pve_up`, `pve_onboot_status`, `pve_disk_usage_bytes`,
   `pve_disk_size_bytes`, `pve_memory_usage_bytes`, `pve_memory_size_bytes`,
   `pve_cluster_info`, `longhorn_volume_robustness`,
@@ -156,12 +162,30 @@ templates or intentionally stopped guests.
 
 | Alert | Expression core | For | Severity |
 |---|---|---|---|
-| `LonghornVolumeFaulted` | `longhorn_volume_robustness == 3` | 1m | critical |
-| `LonghornVolumeDegraded` | `longhorn_volume_robustness == 2` | 20m | warning |
+| `LonghornVolumeFaulted` | `longhorn_volume_robustness{state="faulted"} == 1` | 1m | critical |
+| `LonghornVolumeDegraded` | `longhorn_volume_robustness{state="degraded"} == 1` | 20m | warning |
 | `LonghornNodeStorageFillingUp` | `longhorn_node_storage_usage_bytes / longhorn_node_storage_capacity_bytes > 0.85` | 30m | warning |
 
 The 20m window on `Degraded` is deliberate — it rides out normal rebuild churn
 during a rolling host upgrade.
+
+**Corrected 2026-08-17 during implementation.** This section originally specified
+`longhorn_volume_robustness == 3` / `== 2`, on the assumption that the metric is a
+numeric enum (0=unknown, 1=healthy, 2=degraded, 3=faulted). It is not. Longhorn
+emits it **one-hot across a `state` label** — `{state="healthy"} 0`,
+`{state="faulted"} 0`, `{state="unknown"} 1` — with values only ever 0 or 1. The
+enum comparisons could never match, so both volume rules would have been silent
+forever. Verified against live series before correcting.
+
+**Also corrected: Longhorn was already under-scraped, independent of this work.**
+The pre-existing `longhorn` job was a `static_configs` target pointing at the
+`longhorn-backend` ClusterIP, so each scrape hit one random longhorn-manager pod
+out of eight. Live evidence: `longhorn_node_storage_usage_bytes` carried exactly
+one series instead of eight, and per-volume series appeared and vanished with
+whichever pod answered — which would also stop `LonghornVolumeDegraded`'s `for: 20m`
+from ever maturing. Replaced with a ServiceMonitor on `longhorn-backend`, which
+scrapes every endpoint pod individually. Verification after deploy: expect eight
+`longhorn_node_storage_usage_bytes` series, not one.
 
 ### 6.3 Certificates (requires the new ServiceMonitor)
 
