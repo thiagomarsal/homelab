@@ -1,0 +1,81 @@
+---
+# Application-level rules for workloads whose outage has real-world consequences.
+#
+# Why these exist when kube-prometheus-stack already ships
+# KubeDeploymentReplicasMismatch: that alert is a generic warning covering every
+# Deployment in the cluster equally. The HOA site is the one workload here with
+# outside users, and on 2026-08-17 it sat down for 2.5 hours while its pods were
+# stranded on a dead node. These name it explicitly, at critical severity, with a
+# first response that says what to actually check.
+#
+# Why this is a Prometheus rule and not an Uptime Kuma monitor: mariadb is a
+# ClusterIP service (10.43.65.219:3306), unreachable from Kuma's LXC. Monitoring
+# it from outside would mean publishing the database on the LAN via MetalLB or a
+# NodePort — trading a real security boundary for observability. kube-state-metrics
+# already sees it from inside, for free.
+#
+# Kuma still covers the user-visible half: its "HOA site" monitor is a keyword
+# check on "Auburn Fields", so a database failure that leaves WordPress serving an
+# error page with HTTP 200 shows up there as DOWN. The two are complementary —
+# this one says which component broke, Kuma's says whether residents can read it.
+#
+# These are deliberately NOT added to the KubeNodeNotReady inhibition group. While
+# a node is down you still want to know the HOA site is down: that is the single
+# alert most worth receiving during a node outage, not noise to suppress.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: app-rules
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: hoa
+      rules:
+        - alert: HOADatabaseDown
+          expr: |
+            kube_deployment_status_replicas_available{namespace="hoa", deployment="mariadb"} == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "HOA database (mariadb) has no available replica"
+            description: >-
+              WordPress cannot serve real content without it, and it may still answer
+              HTTP 200 with a database-error page — so do not trust a green status
+              check. First: kubectl get pods -n hoa -o wide. If the pod is stuck
+              Terminating on a dead node, its RWO Longhorn volume is stranded and the
+              replacement will sit in ContainerCreating indefinitely; force-delete the
+              old pod (kubectl delete pod -n hoa <pod> --force --grace-period=0) so
+              the volume detaches. That exact failure caused a 2.5-hour outage on
+              2026-08-17, because node-down-pod-deletion-policy is
+              delete-statefulset-pod and these are Deployments.
+
+        - alert: HOASiteDown
+          expr: |
+            kube_deployment_status_replicas_available{namespace="hoa", deployment="wordpress"} == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "HOA site (wordpress) has no available replica"
+            description: >-
+              auburn-fields.com is down for residents. Same first response as
+              HOADatabaseDown — check for a pod stranded on a failed node with its
+              Longhorn volume still attached. Uptime Kuma's "HOA site" keyword
+              monitor should be alerting in parallel; if it is not, that discrepancy
+              is itself worth investigating.
+
+        - alert: HOAMetricsAbsent
+          expr: |
+            absent(kube_deployment_status_replicas_available{namespace="hoa", deployment="mariadb"})
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "HOA deployment metrics have disappeared"
+            description: >-
+              The two rules above are silently dead. Either the hoa namespace was
+              renamed or removed, or kube-state-metrics has stopped reporting it.
+              Same pattern as PVEMetricsAbsent and LonghornMetricsAbsent.
