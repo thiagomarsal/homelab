@@ -4,8 +4,9 @@
 #   ansible/roles/rancher/templates/kube-prometheus-stack-values.yml.j2
 #
 # That template is rendered with vault-encrypted vars (SMTP credentials, Grafana
-# admin password) and the pve_nodes list, then passed to `helm upgrade --install`
-# by ansible/roles/rancher/tasks/main.yml (tags: monitoring).
+# admin password); PVE scrape targets come from the inventory `pve` group. It is
+# then passed to `helm upgrade --install` by ansible/roles/rancher/tasks/main.yml
+# (tags: monitoring).
 #
 # This file previously held a stale copy of those values — including a Prometheus
 # nodeSelector that was never applied, because nothing reads this path. It is kept

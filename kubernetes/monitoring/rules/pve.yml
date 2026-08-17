@@ -1,0 +1,170 @@
+---
+# PVE fleet rules.
+#
+# Every PVE series is duplicated across pve-exporter targets: each scraped host
+# returns the WHOLE cluster (node/pve01..node/pve08). So every expression here
+# aggregates with `max by (id)` — a node counts as down only when every surviving
+# view agrees, which is corosync's own quorum truth rather than one host's opinion.
+#
+# Label contract (Alertmanager inhibition depends on these exact names):
+#   pve_host — PVE hostname, e.g. pve06
+#   node     — k3s node name, e.g. k3s-worker-3 (guest alerts only)
+#   guest    — PVE guest id, e.g. qemu/116
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: pve-rules
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: pve.hosts
+      rules:
+        - alert: PVEHostDown
+          expr: |
+            label_replace(
+              max by (id) (pve_up{id=~"node/.*"}) == 0,
+              "pve_host", "$1", "id", "node/(.*)"
+            )
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "PVE host {{ $labels.pve_host }} is down"
+            description: "Every reporting pve-exporter view agrees {{ $labels.id }} is down. Guests on it are gone."
+
+        - alert: PVEClusterNotQuorate
+          expr: max by (id) (pve_up{id=~"cluster/.*"}) == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "PVE cluster {{ $labels.id }} lost quorum"
+            description: "Corosync is not quorate. Expect a partition, not a single host failure."
+
+        - alert: PVEHostMemoryPressure
+          expr: |
+            label_replace(
+              max by (id) (
+                pve_memory_usage_bytes{id=~"node/.*"} / pve_memory_size_bytes{id=~"node/.*"}
+              ) > 0.92,
+              "pve_host", "$1", "id", "node/(.*)"
+            )
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "PVE host {{ $labels.pve_host }} memory at {{ $value | humanizePercentage }}"
+            description: "Sustained above 92% for 30m. Guests risk OOM kills."
+
+    - name: pve.guests
+      rules:
+        # onboot=1 is the intent signal: a guest that is supposed to start on boot
+        # but is not running did not stop on purpose. template="1" excludes VM
+        # templates. Together these need no hardcoded exclusion list.
+        #
+        # Label surgery matters here. In pve_guest_info, `node` is the PVE HOST
+        # (pve06) and `name` is the guest (k3s-worker-3). Alertmanager inhibits the
+        # k8s cascade by matching `node` against kubelet/kube-state-metrics alerts,
+        # which use the k3s node name — so node must end up holding `name`, and the
+        # PVE host moves to pve_host. Copy node -> pve_host FIRST, then overwrite
+        # node from name; reversing the order loses the host.
+        - alert: PVEGuestDownUnexpectedly
+          expr: |
+            label_replace(
+              label_replace(
+                (
+                  max by (id) (pve_up{id=~"qemu/.*|lxc/.*"}) == 0
+                  and on (id) max by (id) (pve_onboot_status) == 1
+                )
+                * on (id) group_left(node, name)
+                  max by (id, node, name) (pve_guest_info{template="0"}),
+                "pve_host", "$1", "node", "(.*)"
+              ),
+              "node", "$1", "name", "(.*)"
+            )
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: "PVE guest {{ $labels.name }} ({{ $labels.id }}) is down on {{ $labels.pve_host }}"
+            description: "Guest has onboot=1 but is not running. It did not stop on purpose."
+
+        - alert: PVEGuestOnbootDisabled
+          expr: |
+            label_replace(
+              label_replace(
+                (
+                  max by (id) (pve_up{id=~"qemu/.*|lxc/.*"}) == 1
+                  and on (id) max by (id) (pve_onboot_status) == 0
+                )
+                * on (id) group_left(node, name)
+                  max by (id, node, name) (pve_guest_info{template="0"}),
+                "pve_host", "$1", "node", "(.*)"
+              ),
+              "node", "$1", "name", "(.*)"
+            )
+          for: 1h
+          labels:
+            severity: warning
+          annotations:
+            summary: "PVE guest {{ $labels.name }} ({{ $labels.id }}) is running with onboot=0"
+            description: "It will NOT come back after {{ $labels.pve_host }} reboots. Fix with: qm set <vmid> --onboot 1"
+
+    - name: pve.storage
+      rules:
+        - alert: PVEStorageCritical
+          expr: |
+            label_replace(
+              max by (id) (
+                pve_disk_usage_bytes{id=~"storage/.*"} / pve_disk_size_bytes{id=~"storage/.*"}
+              ) > 0.95,
+              "pve_host", "$1", "id", "storage/([^/]+)/.*"
+            )
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: "PVE storage {{ $labels.id }} is {{ $value | humanizePercentage }} full"
+            description: "Above 95%. Proxmox writes fail hard when a storage fills."
+
+        - alert: PVEStorageFillingUp
+          expr: |
+            label_replace(
+              max by (id) (
+                pve_disk_usage_bytes{id=~"storage/.*"} / pve_disk_size_bytes{id=~"storage/.*"}
+              ) > 0.85,
+              "pve_host", "$1", "id", "storage/([^/]+)/.*"
+            )
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "PVE storage {{ $labels.id }} is {{ $value | humanizePercentage }} full"
+            description: "Above 85%. Highest normal fill in this fleet is ~72% (pve01/pve02 local-lvm)."
+
+    - name: pve.monitoring-health
+      rules:
+        # A rule whose metric vanished never fires and looks exactly like health.
+        - alert: PVEMetricsAbsent
+          expr: absent(pve_up)
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: "pve_up has disappeared — PVE monitoring is blind"
+            description: "pve-exporter is not producing metrics. Every PVE alert above is silently dead."
+
+        # pve_host here comes straight from the scrape config's static_configs label
+        # (see kube-prometheus-stack-values.yml.j2), not from label surgery on the
+        # instance IP — IP-to-hostname is a +1 offset (.10 -> pve01 .. .17 -> pve08)
+        # that a regex capture cannot express.
+        - alert: PVEExporterTargetDown
+          expr: up{job="pve"} == 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "pve-exporter cannot reach {{ $labels.pve_host }} ({{ $labels.instance }})"
+            description: "One exporter view is gone. The other views still cover the fleet, so this is redundancy loss, not blindness."

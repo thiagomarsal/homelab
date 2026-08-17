@@ -30,9 +30,10 @@ prometheus:
         params:
           module: [default]
         static_configs:
-          - targets:
-{% for ip in pve_nodes %}
-              - {{ ip }}
+{% for h in groups['pve'] | sort %}
+          - targets: ["{{ hostvars[h].ansible_host }}"]
+            labels:
+              pve_host: "{{ h }}"
 {% endfor %}
         relabel_configs:
           - source_labels: [__address__]

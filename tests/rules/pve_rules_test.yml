@@ -1,0 +1,127 @@
+---
+rule_files:
+  - pve.yml
+
+evaluation_interval: 1m
+
+tests:
+  # A node is down only when EVERY surviving exporter view agrees.
+  - interval: 1m
+    input_series:
+      - series: 'pve_up{id="node/pve06",instance="192.168.1.10",job="pve"}'
+        values: '0+0x10'
+      - series: 'pve_up{id="node/pve06",instance="192.168.1.11",job="pve"}'
+        values: '0+0x10'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: PVEHostDown
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              id: node/pve06
+              pve_host: pve06
+            exp_annotations:
+              summary: "PVE host pve06 is down"
+              description: "Every reporting pve-exporter view agrees node/pve06 is down. Guests on it are gone."
+
+  # One dissenting view means no alert — do not page on a single stale exporter.
+  - interval: 1m
+    input_series:
+      - series: 'pve_up{id="node/pve06",instance="192.168.1.10",job="pve"}'
+        values: '0+0x10'
+      - series: 'pve_up{id="node/pve06",instance="192.168.1.11",job="pve"}'
+        values: '1+0x10'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: PVEHostDown
+        exp_alerts: []
+
+  # Templates must never alert: template="1" in pve_guest_info.
+  - interval: 1m
+    input_series:
+      - series: 'pve_up{id="qemu/9007",instance="192.168.1.10",job="pve"}'
+        values: '0+0x15'
+      - series: 'pve_onboot_status{id="qemu/9007",instance="192.168.1.10",job="pve"}'
+        values: '1+0x15'
+      - series: 'pve_guest_info{id="qemu/9007",instance="192.168.1.10",job="pve",node="pve05",name="debian12-template",template="1",type="qemu"}'
+        values: '1+0x15'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: PVEGuestDownUnexpectedly
+        exp_alerts: []
+
+  # An intentionally stopped guest (onboot=0) must never alert.
+  - interval: 1m
+    input_series:
+      - series: 'pve_up{id="lxc/100",instance="192.168.1.10",job="pve"}'
+        values: '0+0x15'
+      - series: 'pve_onboot_status{id="lxc/100",instance="192.168.1.10",job="pve"}'
+        values: '0+0x15'
+      - series: 'pve_guest_info{id="lxc/100",instance="192.168.1.10",job="pve",node="pve03",name="immich",template="0",type="lxc"}'
+        values: '1+0x15'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: PVEGuestDownUnexpectedly
+        exp_alerts: []
+
+  # A real k3s VM going down must alert AND carry the k3s node name, because
+  # inhibition keys on `node` to mute the whole k8s cascade.
+  - interval: 1m
+    input_series:
+      - series: 'pve_up{id="qemu/116",instance="192.168.1.10",job="pve"}'
+        values: '0+0x15'
+      - series: 'pve_onboot_status{id="qemu/116",instance="192.168.1.10",job="pve"}'
+        values: '1+0x15'
+      - series: 'pve_guest_info{id="qemu/116",instance="192.168.1.10",job="pve",node="pve06",name="k3s-worker-3",template="0",type="qemu"}'
+        values: '1+0x15'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: PVEGuestDownUnexpectedly
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              id: qemu/116
+              pve_host: pve06
+              node: k3s-worker-3
+              name: k3s-worker-3
+            exp_annotations:
+              summary: "PVE guest k3s-worker-3 (qemu/116) is down on pve06"
+              description: "Guest has onboot=1 but is not running. It did not stop on purpose."
+
+  # Storage alerts must name the host so inhibition can mute them on host death.
+  - interval: 1m
+    input_series:
+      - series: 'pve_disk_usage_bytes{id="storage/pve01/local-lvm",instance="192.168.1.10",job="pve"}'
+        values: '96+0x40'
+      - series: 'pve_disk_size_bytes{id="storage/pve01/local-lvm",instance="192.168.1.10",job="pve"}'
+        values: '100+0x40'
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: PVEStorageCritical
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              id: storage/pve01/local-lvm
+              pve_host: pve01
+            exp_annotations:
+              summary: "PVE storage storage/pve01/local-lvm is 96% full"
+              description: "Above 95%. Proxmox writes fail hard when a storage fills."
+
+  # Target-level failure: one exporter view is unreachable. pve_host comes from the
+  # scrape config, not from label surgery.
+  - interval: 1m
+    input_series:
+      - series: 'up{job="pve",instance="192.168.1.15",pve_host="pve06"}'
+        values: '0+0x15'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: PVEExporterTargetDown
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: pve
+              instance: 192.168.1.15
+              pve_host: pve06
+            exp_annotations:
+              summary: "pve-exporter cannot reach pve06 (192.168.1.15)"
+              description: "One exporter view is gone. The other views still cover the fleet, so this is redundancy loss, not blindness."

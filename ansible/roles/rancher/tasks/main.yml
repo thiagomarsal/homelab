@@ -274,6 +274,13 @@
   changed_when: false
   tags: [monitoring]
 
+- name: Apply Prometheus alerting rules
+  command: k3s kubectl apply -f /tmp/homelab-k8s/monitoring/rules/
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  changed_when: false
+  tags: [monitoring]
+
 # ============================================================
 # Phase 10: Deploy PVE exporter
 # ============================================================
