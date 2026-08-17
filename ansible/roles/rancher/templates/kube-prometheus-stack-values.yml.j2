@@ -36,6 +36,11 @@ alertmanager:
         # yet (no external dead-man's switch by decision), so drop it.
         - matchers: ['alertname="Watchdog"']
           receiver: 'null'
+        # Chart-shipped meta-alert carrying severity=none — its own annotation
+        # says it should be routed to a null receiver, or it mails on every
+        # info-level alert via the default receiver fallback.
+        - matchers: ['alertname="InfoInhibitor"']
+          receiver: 'null'
         - matchers: ['severity="info"']
           receiver: 'null'
         - matchers: ['severity="critical"']
@@ -52,7 +57,10 @@ alertmanager:
 
       # The k8s cascade is muted via `node`, which the guest alert carries from
       # pve_guest_info.name. No static IP-to-host map is needed anywhere.
-      - source_matchers: ['alertname="PVEGuestDownUnexpectedly"']
+      # node!="" guards against an empty pve_guest_info.name: Alertmanager
+      # treats an absent label as "", which would otherwise match — and mute —
+      # every alert that has no `node` label at all.
+      - source_matchers: ['alertname="PVEGuestDownUnexpectedly"', 'node!=""']
         target_matchers: ['alertname!="PVEGuestDownUnexpectedly"']
         equal: ['node']
 
@@ -70,13 +78,11 @@ alertmanager:
       - source_matchers: ['alertname=~"KubeNodeNotReady|KubeNodeUnreachable"']
         target_matchers: ['alertname=~"KubePod.*|KubeDeployment.*|KubeStatefulSet.*|KubeDaemonSet.*"']
 
-      - source_matchers: ['severity="critical"']
-        target_matchers: ['severity="warning"']
-        equal: ['alertname', 'pve_host']
-
-      - source_matchers: ['alertname="LonghornVolumeFaulted"']
-        target_matchers: ['alertname="LonghornVolumeDegraded"']
-        equal: ['volume']
+      # >0.95 always trips >0.85 on the same storage; keyed on the storage id so
+      # only the matching warning is muted, not warnings on other storages.
+      - source_matchers: ['alertname="PVEStorageCritical"']
+        target_matchers: ['alertname="PVEStorageFillingUp"']
+        equal: ['id']
 
     receivers:
       - name: 'null'
@@ -116,14 +122,19 @@ defaultRules:
 
 nodeExporter:
   enabled: true
+
+# node-exporter is a subchart; its ServiceMonitor values live under this
+# top-level key. Values placed under `nodeExporter:` are silently ignored, and
+# the CRD requires camelCase here (snake_case is for raw scrape configs only).
+prometheus-node-exporter:
   prometheus:
     monitor:
       relabelings:
         # node-exporter series carry only instance=IP:9100 by default, so
         # nothing could correlate them with a k3s node name. Inhibition and the
         # runbook both key on `node`.
-        - source_labels: [__meta_kubernetes_pod_node_name]
-          target_label: node
+        - sourceLabels: [__meta_kubernetes_pod_node_name]
+          targetLabel: node
 
 prometheus:
   prometheusSpec:

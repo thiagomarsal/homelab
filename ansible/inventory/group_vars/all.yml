@@ -51,7 +51,13 @@ traefik_hostname: "traefik.tmf-solutions.com"
 longhorn_version: "v1.7.2"
 
 # kube-prometheus-stack
-kube_prometheus_stack_version: "70.4.2"
+# Must track the deployed release, NOT bump independently: the live release is
+# chart 83.7.0 (revision 8), upgraded by hand on 2026-07-17 without updating
+# this var. A run pinned to an older value than what's deployed downgrades the
+# Prometheus Operator while the newer CRDs stay installed — a break that looks
+# like whatever change happened to run first caused it, not the version drift.
+# Verify against `helm list -n monitoring` before changing.
+kube_prometheus_stack_version: "83.7.0"
 pve_exporter_version: "3.5.1"
 grafana_hostname: "grafana.tmf-solutions.com"
 # Set with: ansible-vault encrypt_string '<password>' --name grafana_admin_password

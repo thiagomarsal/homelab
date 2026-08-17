@@ -517,6 +517,7 @@
       ================================================
       Rancher:    https://{{ rancher_hostname }}
       Grafana:    https://{{ grafana_hostname }}
+      Alertmanager: https://{{ alertmanager_hostname }}
       Traefik:    https://{{ traefik_hostname }}
       n8n:        https://{{ n8n_hostname }}
       Immich:     https://{{ immich_hostname }}

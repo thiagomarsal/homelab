@@ -1,6 +1,10 @@
 ---
 # Kuma runs outside the cluster and needs a reachable endpoint to probe.
 # Basic-auth guards it; the silence UI becomes browser-usable as a side benefit.
+#
+# Targets the ClusterIP service the chart creates (kube-prometheus-stack-alertmanager),
+# matching every other IngressRoute in this repo — not the headless
+# alertmanager-operated service.
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -15,6 +19,6 @@ spec:
       middlewares:
         - name: alertmanager-auth
       services:
-        - name: alertmanager-operated
+        - name: kube-prometheus-stack-alertmanager
           port: 9093
   tls: {}  # uses TLSStore default — wildcard cert from traefik namespace
