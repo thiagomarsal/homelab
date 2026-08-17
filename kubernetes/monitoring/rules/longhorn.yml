@@ -1,0 +1,41 @@
+---
+# Longhorn robustness encoding: 0=unknown, 1=healthy, 2=degraded, 3=faulted.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: longhorn-rules
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: longhorn.volumes
+      rules:
+        - alert: LonghornVolumeFaulted
+          expr: longhorn_volume_robustness == 3
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Longhorn volume {{ $labels.volume }} is faulted"
+            description: "All replicas are unavailable. The workload using it cannot read or write."
+
+        # 20m rides out the rebuild churn a rolling host upgrade always causes.
+        - alert: LonghornVolumeDegraded
+          expr: longhorn_volume_robustness == 2
+          for: 20m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Longhorn volume {{ $labels.volume }} degraded for 20m"
+            description: "Running on fewer replicas than configured and not rebuilding fast enough."
+
+        - alert: LonghornNodeStorageFillingUp
+          expr: |
+            longhorn_node_storage_usage_bytes / longhorn_node_storage_capacity_bytes > 0.85
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Longhorn storage on {{ $labels.node }} is {{ $value | humanizePercentage }} full"
+            description: "Above 85%. Longhorn stops scheduling replicas before it fills completely."

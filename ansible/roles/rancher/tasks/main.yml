@@ -281,6 +281,13 @@
   changed_when: false
   tags: [monitoring]
 
+- name: Apply cert-manager ServiceMonitor
+  command: k3s kubectl apply -f /tmp/homelab-k8s/monitoring/cert-manager/servicemonitor.yml
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  changed_when: false
+  tags: [monitoring]
+
 # ============================================================
 # Phase 10: Deploy PVE exporter
 # ============================================================

@@ -1,0 +1,42 @@
+---
+# Requires kubernetes/monitoring/cert-manager/servicemonitor.yml — without it
+# these metrics do not exist and CertMetricsAbsent is what fires instead.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: cert-rules
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: certificates
+      rules:
+        - alert: CertExpiringSoon
+          expr: |
+            certmanager_certificate_expiration_timestamp_seconds - time() < 14 * 86400
+          for: 1h
+          labels:
+            severity: warning
+          annotations:
+            summary: "Certificate {{ $labels.name }} expires in under 14 days"
+            description: "cert-manager has not renewed it yet. Every *.tmf-solutions.com route depends on the wildcard cert."
+
+        - alert: CertRenewalFailed
+          expr: |
+            certmanager_certificate_ready_status{condition="False"} == 1
+          for: 1h
+          labels:
+            severity: warning
+          annotations:
+            summary: "Certificate {{ $labels.name }} is not ready"
+            description: "Renewal is failing. Check the DNS-01 solver and the Cloudflare API token."
+
+        - alert: CertMetricsAbsent
+          expr: absent(certmanager_certificate_expiration_timestamp_seconds)
+          for: 1h
+          labels:
+            severity: warning
+          annotations:
+            summary: "cert-manager metrics have disappeared"
+            description: "The certificate rules above are silently dead. Check the cert-manager ServiceMonitor."

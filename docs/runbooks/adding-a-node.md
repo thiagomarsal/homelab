@@ -59,8 +59,9 @@ Pick the next free VMID (masters 110-112, workers 113+) and the next free static
 1. Provision the VM (above)
 2. Add the node to `ansible/inventory/hosts.yml` under `agents:` (add `k3s_node_taints`
    too if it should be on-demand/tainted, like k3s-worker-1)
-3. If it's a new pve host, also add it under `pve:` and to `pve_nodes` in
-   `group_vars/all.yml` so pve-exporter picks it up
+3. If it's a new pve host, also add it under `pve:` in `hosts.yml` — the
+   pve-exporter scrape targets and their `pve_host` labels are generated from
+   that inventory group, so nothing else needs editing
 4. Run: `ansible-playbook playbooks/k3s/site.yml --limit <new-node-hostname>`
    (runs the `common` prep role + `k3s-agent` join; master phases are skipped
    automatically since they're not in the `--limit` scope)
