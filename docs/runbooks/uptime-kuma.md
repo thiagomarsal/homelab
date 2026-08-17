@@ -71,7 +71,7 @@ enabled (see SMTP section below).
 | 9 | Ping (ICMP) | 192.168.1.1 | pfSense gateway | |
 | 10 | Ping (ICMP) | 1.1.1.1 | internet | Confirms the LXC's uplink itself is up, not just the LAN |
 | 11 | HTTP(s) | `https://grafana.tmf-solutions.com` | grafana | Accept status 200-399 |
-| 12 | HTTP(s) | `https://alertmanager.tmf-solutions.com/-/healthy` | alertmanager | Basic-auth required — see below |
+| 12 | HTTP(s) | `https://alertmanager.tmf-solutions.com/-/healthy` | alertmanager | No auth needed — `/-/healthy` has its own unauthenticated IngressRoute (Task 9) |
 
 The 10 ICMP checks (#1-10) deliberately target hardcoded IPs, not hostnames.
 This keeps the probe path free of DNS, Traefik, and k3s — none of those need
@@ -102,14 +102,16 @@ Read the actual values with `ansible-vault view ansible/inventory/group_vars/all
 (or `ansible-vault decrypt --output=-` on the specific block) — never paste
 them into this document, a commit, or any other plaintext file.
 
-**Monitor #12's basic-auth** (Alertmanager) needs the *plaintext* password
-chosen when the credential was generated with `htpasswd -nbB admin
-'<password>'`. Only the resulting bcrypt hash (`alertmanager_basicauth_hash`)
-is stored in vault — bcrypt is one-way, so the plaintext password is **not**
-recoverable from git or vault. Whoever generated it must supply it directly
-when creating this monitor; if it's lost, regenerate a new
-`htpasswd`/`alertmanager_basicauth_hash` pair (Task 5) and update this
-monitor to match.
+**Monitor #12 needs no credential.** `kubernetes/monitoring/alertmanager/ingressroute.yml`
+(Task 9) carves out a second, higher-priority route for exactly
+`Path(`/-/healthy`)` with no auth middleware — that endpoint returns a
+constant 200/"OK" and leaks nothing about alert state or config. Everything
+else on `alertmanager.tmf-solutions.com` (the UI, the API) still sits behind
+basic-auth. This was a deliberate change from the original design: the
+basic-auth password is only recoverable as a bcrypt hash
+(`alertmanager_basicauth_hash` in vault) — the plaintext is not recoverable
+from git or vault at all — so having Kuma hold a copy of it would have been a
+second, unrecoverable-if-lost place for that credential to live.
 
 ## Backup
 

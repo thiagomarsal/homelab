@@ -1,6 +1,8 @@
 ---
 # Kuma runs outside the cluster and needs a reachable endpoint to probe.
-# Basic-auth guards it; the silence UI becomes browser-usable as a side benefit.
+# Everything except /-/healthy sits behind basic-auth; the silence UI becomes
+# browser-usable as a side benefit. /-/healthy is carved out below as its own
+# unauthenticated route so Kuma's monitor needs no credential at all.
 #
 # Targets the ClusterIP service the chart creates (kube-prometheus-stack-alertmanager),
 # matching every other IngressRoute in this repo — not the headless
@@ -14,8 +16,26 @@ spec:
   entryPoints:
     - websecure
   routes:
+    # Unauthenticated on purpose, and listed first with an explicit higher
+    # priority so Traefik always matches it before the catch-all below
+    # (priority ties would otherwise be broken by rule length, which is
+    # fragile to rely on). /-/healthy returns a constant 200/"OK" and leaks
+    # nothing about alert state or config, so exposing it costs nothing.
+    #
+    # This lets Kuma's HTTP monitor probe Alertmanager without holding a
+    # copy of the basic-auth password — a credential that isn't even
+    # recoverable from vault (only the bcrypt hash is stored there). One
+    # fewer place a password needs to live, and one fewer thing to rotate
+    # in Kuma's SQLite if it ever changes.
+    - match: Host(`alertmanager.tmf-solutions.com`) && Path(`/-/healthy`)
+      kind: Rule
+      priority: 10
+      services:
+        - name: kube-prometheus-stack-alertmanager
+          port: 9093
     - match: Host(`alertmanager.tmf-solutions.com`)
       kind: Rule
+      priority: 1
       middlewares:
         - name: alertmanager-auth
       services:
