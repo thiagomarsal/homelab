@@ -226,20 +226,40 @@ a single host death produces roughly 30 emails: host down, its guests down, the
 k3s node NotReady, kubelet down, every pod on that node, Longhorn degraded, and
 each affected volume replica.
 
-**Prerequisite — one shared label across the PVE/k8s boundary.** `pve_host` is
-added on both sides: a static IP-to-host relabel on the node targets
-(`.50`→pve01 … `.57`→pve08) and `label_replace` off the `id` label in the PVE
-rules. The static map is safe because HA daemons are disabled fleet-wide, so
-guests never migrate.
+**Prerequisite — a shared label across the PVE/k8s boundary, derived from live
+metrics rather than a hand-maintained map.** `pve_guest_info` already carries both
+halves: its `node` label is the PVE host and its `name` label is the guest name,
+which for the k3s VMs *is* the k3s node name. So the guest rules copy `node` into
+`pve_host`, then overwrite `node` with `name` — after which a PVE guest alert
+carries `node="k3s-worker-3"`, exactly matching what kubelet and
+kube-state-metrics alerts use. No static IP-to-hostname map exists anywhere.
+
+One relabel is still needed: node-exporter series carry only `instance=IP:9100`,
+so `nodeExporter.prometheus.monitor.relabelings` adds
+`node` from `__meta_kubernetes_pod_node_name`.
 
 Rules, in precedence order:
 
-1. `PVEHostDown` mutes **everything** with an equal `pve_host` → one email per
-   dead host.
-2. `PVEClusterNotQuorate` mutes `PVEHostDown` → a partition reads as one event,
+1. `PVEClusterNotQuorate` mutes `PVEHostDown` → a partition reads as one event,
    not eight.
-3. `severity=critical` mutes `severity=warning` on equal `[alertname, pve_host]`.
-4. `LonghornVolumeFaulted` mutes `LonghornVolumeDegraded` on equal `volume`.
+2. `PVEGuestDownUnexpectedly` mutes every other alert with an equal `node` → the
+   whole k8s cascade for that node collapses into nothing.
+3. `PVEHostDown` mutes `PVEStorage*`, `PVEHostMemoryPressure`, and
+   `PVEExporterTargetDown` on equal `pve_host`. It deliberately does **not** mute
+   `PVEGuestDownUnexpectedly` — that alert must stay alive both because you want
+   to know which guests died and because it is the inhibitor for rule 2.
+4. `KubeNodeNotReady`/`KubeNodeUnreachable` mute pod-level alerts
+   (`KubePod*`, `KubeDeployment*`, `KubeStatefulSet*`, `KubeDaemonSet*`)
+   cluster-wide. Coarse on purpose — kube-state-metrics pod alerts have no
+   reliable `node` label. **Trade-off:** an unrelated pod problem can hide during
+   a node outage, so the runbook requires re-checking pods after recovery.
+5. `severity=critical` mutes `severity=warning` on equal `[alertname, pve_host]`.
+6. `LonghornVolumeFaulted` mutes `LonghornVolumeDegraded` on equal `volume`.
+
+Net effect of a host death: two emails (`PVEHostDown` + `PVEGuestDownUnexpectedly`)
+instead of roughly thirty. Alertmanager inhibition is not transitive, which is why
+`PVEHostDown` does not mute the guest alert's own inhibiting power — the guest
+alert has to survive in order to suppress the k8s cascade.
 
 ## 8. Routing
 
