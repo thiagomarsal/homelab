@@ -9,7 +9,8 @@
 # Label contract (Alertmanager inhibition depends on these exact names):
 #   pve_host — PVE hostname, e.g. pve06
 #   node     — k3s node name, e.g. k3s-worker-3 (guest alerts only)
-#   guest    — PVE guest id, e.g. qemu/116
+#   id       — PVE object id, e.g. qemu/116
+#   name     — PVE guest name, e.g. k3s-worker-3
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:

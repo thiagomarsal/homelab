@@ -33,7 +33,20 @@ PY
   RULE_FILES+=("$(basename "$f")")
 done
 
-cp "$TESTS_DIR"/*.yml "$WORK/" 2>/dev/null || true
+TEST_FILES=()
+for t in "$TESTS_DIR"/*_test.yml; do
+  [ -e "$t" ] || continue
+  cp "$t" "$WORK/"
+  TEST_FILES+=("$(basename "$t")")
+done
+
+# Fail loudly instead of silently reporting green: a missing/renamed tests dir
+# would otherwise make the "for t in ..." loop below iterate zero times and
+# the whole script would exit 0 having run no unit tests at all.
+[ ${#TEST_FILES[@]} -gt 0 ] || {
+  echo "ERROR: no unit tests found in $TESTS_DIR" >&2
+  exit 1
+}
 
 # Pass an explicit file list rather than a glob: a glob here is evaluated by
 # this script's shell against the repo root (no *.yml matches there), so it
@@ -42,9 +55,8 @@ cp "$TESTS_DIR"/*.yml "$WORK/" 2>/dev/null || true
 docker run --rm -v "$WORK:/work" -w /work --entrypoint promtool \
   prom/prometheus:latest check rules "${RULE_FILES[@]}"
 
-for t in "$TESTS_DIR"/*_test.yml; do
-  [ -e "$t" ] || continue
-  echo "running unit tests: $(basename "$t")"
+for t in "${TEST_FILES[@]}"; do
+  echo "running unit tests: $t"
   docker run --rm -v "$WORK:/work" -w /work --entrypoint promtool \
-    prom/prometheus:latest test rules "$(basename "$t")"
+    prom/prometheus:latest test rules "$t"
 done
