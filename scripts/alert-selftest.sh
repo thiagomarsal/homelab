@@ -71,16 +71,27 @@ post_alert() {  # name severity extra_label_json
 # straight into python3 — pipefail plus a failed curl there would otherwise
 # hand python3 an empty stdin, which surfaces as a confusing JSON traceback
 # rather than a clear "Alertmanager did not respond" error.
-get_alerts_field() {  # query_string print_prefix
-  local qs="$1" prefix="$2" resp
-  if ! resp=$(curl -sf -m5 "$AM/api/v2/alerts?$qs" 2>&1); then
-    echo "ERROR: GET $AM/api/v2/alerts?$qs failed: $resp" >&2
+# List alert names whose status.<field> is non-empty (optionally containing $2).
+#
+# NOTE: do NOT use the API's ?silenced=/?inhibited= query params to decide this.
+# They are INCLUSIVE filters — "silenced=true" means "include silenced alerts in
+# the results", not "return only silenced alerts". Reading them as exclusive
+# makes this script report every active alert as silenced/suppressed, which is
+# false evidence from the one tool whose job is proving alerting works.
+# status.silencedBy / status.inhibitedBy are the authoritative fields.
+alerts_with_status() {  # field [id_to_match] -> prints matching alert names
+  local field="$1" want="${2:-}" resp
+  if ! resp=$(curl -sf -m5 "$AM/api/v2/alerts" 2>&1); then
+    echo "ERROR: GET $AM/api/v2/alerts failed: $resp" >&2
     return 1
   fi
-  printf '%s' "$resp" | python3 -c "
-import json, sys
+  printf '%s' "$resp" | FIELD="$field" WANT="$want" python3 -c "
+import json, os, sys
+field, want = os.environ['FIELD'], os.environ['WANT']
 for a in json.load(sys.stdin):
-    print('$prefix' + a['labels']['alertname'])
+    ids = a['status'].get(field) or []
+    if ids and (not want or want in ids):
+        print(a['labels']['alertname'])
 "
 }
 
@@ -98,7 +109,7 @@ case "${1:?usage: critical|warning|info|inhibit|silence}" in
     # fail is the failure mode this whole branch exists to eliminate. If
     # KubeNodeNotReady is missing from the inhibited set, the cascade is
     # broken and this must exit non-zero, loudly.
-    suppressed=$(get_alerts_field 'silenced=false&inhibited=true' '') || exit 1
+    suppressed=$(alerts_with_status inhibitedBy) || exit 1
     printf '%s\n' "$suppressed"
     if ! printf '%s\n' "$suppressed" | grep -qx 'KubeNodeNotReady'; then
       echo "ERROR: KubeNodeNotReady is not in the inhibited set — the node-down inhibition cascade is broken." >&2
@@ -122,7 +133,12 @@ case "${1:?usage: critical|warning|info|inhibit|silence}" in
     echo "silence $ID created"
     post_alert SelfTestCritical critical ', "pve_host": "pve99"'
     sleep 5
-    get_alerts_field 'silenced=true' 'silenced: '
+    silenced=$(alerts_with_status silencedBy "$ID") || exit 1
+    if [ -z "$silenced" ]; then
+      echo "FAIL: silence $ID matched no alerts — expected at least SelfTestCritical" >&2
+      exit 1
+    fi
+    echo "$silenced" | sed 's/^/  silenced by this silence: /'
     if curl -sf -m5 -XDELETE "$AM/api/v2/silence/$ID" >/dev/null 2>&1; then
       echo "silence $ID deleted"
       ID=""  # cleared so the EXIT trap does not redundantly retry a delete that already succeeded
