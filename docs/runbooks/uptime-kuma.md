@@ -123,9 +123,19 @@ second, unrecoverable-if-lost place for that credential to live.
   or partial backup run never overwrites a previous good one.
 - **Where**: `/var/lib/vz/dump/kuma/kuma-YYYYMMDD.db` on **pve01** (the host,
   not the container).
-- **Retention**: 7 days (older dated files deleted by `mtime`).
+- **Retention**: 7 days (older dated files, and any orphaned
+  `.kuma-*.db.tmp` files left by an interrupted pull, deleted by `mtime`).
 - This is the *only* backup of the 12 monitor definitions. There is no
   second copy and nothing here is in git.
+- **Checking it actually ran**: this LXC has no MTA, so cron.daily failures
+  go nowhere by default. The script logs to journald under the
+  `kuma-db-backup` tag on every run — a `daemon.info` line on success, a
+  `daemon.err` line with a reason on failure. From pve01:
+  ```
+  ansible pve01 -m shell -a 'pct exec 102 -- journalctl -t kuma-db-backup --since "-8 days"'
+  ```
+  A missing success line for a given day means that day has no backup —
+  treat it the same as a failure even if nothing paged.
 
 ## Restore procedure
 
@@ -145,15 +155,28 @@ second, unrecoverable-if-lost place for that credential to live.
    ```
    ansible pve01 -m shell -a 'ls -t /var/lib/vz/dump/kuma/kuma-*.db | head -1'
    ```
-4. Push it into the container's Docker volume and restart:
+4. `/app/data` is a **Docker named volume** (`uptime-kuma`), not a path in
+   the LXC's own filesystem — `pct push` writes into the LXC rootfs, which
+   nothing reads, and a restore done that way leaves Kuma silently starting
+   empty at the setup wizard with no error anywhere. Reach into the
+   container the same way the backup script does: push to a scratch path in
+   the LXC first, then `docker cp` from there into the volume. Stop the
+   container first so Kuma isn't holding `kuma.db` open mid-restore:
    ```
-   ansible pve01 -m shell -a 'pct push 102 /var/lib/vz/dump/kuma/kuma-<newest-date>.db /app/data/kuma.db'
+   ansible pve01 -m shell -a 'pct push 102 /var/lib/vz/dump/kuma/kuma-<newest-date>.db /tmp/kuma-restore.db'
+   ansible pve01 -m shell -a 'pct exec 102 -- docker cp /tmp/kuma-restore.db uptime-kuma:/app/data/kuma.db'
+   ansible pve01 -m shell -a 'pct exec 102 -- rm -f /tmp/kuma-restore.db'
    ansible pve01 -m shell -a 'pct exec 102 -- docker start uptime-kuma'
    ```
-5. Confirm at <http://192.168.1.21:3001> that all 12 monitors and the SMTP
-   notification are present with correct history. If the backup is more than
-   a day old, recreate any monitors added or changed after that backup's
-   date manually, using the table in this document as the source of truth.
+5. **Verify the restore actually took**, not just that the container
+   started: open <http://192.168.1.21:3001> and confirm it loads straight to
+   the login screen (or dashboard) — **not** the first-run setup wizard —
+   and that all 12 monitors from the table above are present with their
+   prior history. Seeing the setup wizard means the `docker cp` step landed
+   on an empty/wrong file and needs to be redone. If the backup used is more
+   than a day old, recreate any monitors added or changed after that
+   backup's date manually, using the table in this document as the source
+   of truth.
 
 If no backup exists at all (e.g., pve01 itself was lost before the first
 nightly run), there is no reproduction path except manually recreating the

@@ -74,16 +74,46 @@
   register: docker_install
   changed_when: "'Setting up docker-ce' in docker_install.stdout"
 
-- name: Run the Uptime Kuma container
+# Three states matter here, not two. `docker inspect uptime-kuma` alone
+# only distinguishes "container exists" from "container doesn't exist" — it
+# succeeds on a *stopped* container just as it does on a running one, so the
+# brief's original `docker inspect ... || docker run ...` never restarted a
+# container that was manually or crash-stopped between runs (onboot=1 only
+# covers a host reboot, not that). It also made `changed_when` a lie: on the
+# short-circuit no-op path, docker inspect writes nothing to stderr, so
+# `'Error' not in kuma_run.stderr` was True on literally every run, reporting
+# "changed" even when nothing happened.
+#
+# Fixed by reading the container's actual run state up front and branching
+# on it explicitly: absent -> docker run, present-but-stopped -> docker
+# start, present-and-running -> neither task executes (true no-op, honestly
+# reported). {% raw %}/{% endraw %} guards the Go template syntax `docker
+# inspect -f` needs, since Ansible would otherwise try to parse `{{.State...}}`
+# as its own Jinja expression.
+- name: Check current state of the Kuma container
   command: >-
     pct exec {{ kuma_ctid }} -- bash -lc
-    "docker inspect uptime-kuma >/dev/null 2>&1 ||
-     docker run -d --restart=always
+    "docker inspect -f '{% raw %}{{.State.Running}}{% endraw %}' uptime-kuma"
+  register: kuma_container_state
+  failed_when: false
+  changed_when: false
+
+- name: Create and start the Uptime Kuma container (does not exist yet)
+  command: >-
+    pct exec {{ kuma_ctid }} -- bash -lc
+    "docker run -d --restart=always
        -p {{ kuma_port }}:3001
        -v uptime-kuma:/app/data
        --name uptime-kuma {{ kuma_image }}"
-  register: kuma_run
-  changed_when: "'Error' not in kuma_run.stderr"
+  when: kuma_container_state.rc != 0
+  changed_when: true
+
+- name: Start the Kuma container (exists but is not running)
+  command: pct exec {{ kuma_ctid }} -- docker start uptime-kuma
+  when: >-
+    kuma_container_state.rc == 0 and
+    (kuma_container_state.stdout | trim) != 'true'
+  changed_when: true
 
 - name: Install the nightly Kuma database backup
   copy:
@@ -95,6 +125,14 @@
       # the only thing standing between a pve01 loss and re-clicking 12
       # monitors by hand.
       #
+      # This LXC has no MTA, and cron.daily failures otherwise go nowhere on
+      # a minimal host like this — a silently broken backup is exactly the
+      # failure mode this script exists to prevent. Every exit path below
+      # (success and failure) logs to journald under a distinct tag, so
+      # absence of a success line for a given day is itself the signal that
+      # day has no backup. Check with:
+      #   journalctl -t kuma-db-backup --since '-8 days'
+      #
       # `set -e` alone is not sufficient to guarantee we never clobber a
       # good backup with a bad one: `pct pull` can leave a partial file
       # behind if it fails partway, and because the destination filename is
@@ -102,8 +140,9 @@
       # that day's already-good backup. So: verify the sqlite copy's
       # integrity *inside* the container before pulling anything, pull to a
       # hidden temp file, verify it is non-empty, and only then atomically
-      # `mv` it over the final dated name. Retention is handled by deleting
-      # anything older than 7 days by mtime.
+      # `mv` it over the final dated name. Retention deletes both the final
+      # dated backups AND any orphaned `.kuma-*.db.tmp` files after 7 days,
+      # so a pull interrupted mid-transfer doesn't leave permanent litter.
       #
       # Date format uses a single '%' (e.g. %Y%m%d) deliberately, not '%%'.
       # This content is rendered once by Ansible's `copy` module — which
@@ -124,27 +163,39 @@
       TMP="$DEST/.kuma-$STAMP.db.tmp"
       FINAL="$DEST/kuma-$STAMP.db"
 
-      pct exec {{ kuma_ctid }} -- docker exec uptime-kuma \
-        sqlite3 /app/data/kuma.db ".backup /app/data/kuma-backup.db"
-
-      INTEGRITY=$(pct exec {{ kuma_ctid }} -- sqlite3 /app/data/kuma-backup.db "PRAGMA integrity_check;")
-      if [ "$INTEGRITY" != "ok" ]; then
-        echo "kuma-db-backup: sqlite integrity check failed (got: $INTEGRITY), aborting" >&2
-        pct exec {{ kuma_ctid }} -- rm -f /app/data/kuma-backup.db
+      # `cmd || fail "..."` is deliberate over relying on `set -e` alone: it
+      # lets us log to journald before exiting, and it's portable to dash
+      # (the default /bin/sh on Debian), which does not support `trap ... ERR`.
+      fail() {
+        logger -t kuma-db-backup -p daemon.err "$1"
+        rm -f "$TMP"
         exit 1
+      }
+
+      pct exec {{ kuma_ctid }} -- docker exec uptime-kuma \
+        sqlite3 /app/data/kuma.db ".backup /app/data/kuma-backup.db" \
+        || fail "sqlite3 .backup failed inside the container"
+
+      INTEGRITY=$(pct exec {{ kuma_ctid }} -- sqlite3 /app/data/kuma-backup.db "PRAGMA integrity_check;") \
+        || fail "could not run PRAGMA integrity_check inside the container"
+      if [ "$INTEGRITY" != "ok" ]; then
+        pct exec {{ kuma_ctid }} -- rm -f /app/data/kuma-backup.db
+        fail "sqlite integrity check failed (got: $INTEGRITY)"
       fi
 
-      pct pull {{ kuma_ctid }} /app/data/kuma-backup.db "$TMP"
+      pct pull {{ kuma_ctid }} /app/data/kuma-backup.db "$TMP" \
+        || fail "pct pull failed"
       pct exec {{ kuma_ctid }} -- rm -f /app/data/kuma-backup.db
 
       if [ ! -s "$TMP" ]; then
-        echo "kuma-db-backup: pulled backup is empty, aborting" >&2
-        rm -f "$TMP"
-        exit 1
+        fail "pulled backup is empty"
       fi
 
-      mv "$TMP" "$FINAL"
-      find "$DEST" -name 'kuma-*.db' -mtime +7 -delete
+      mv "$TMP" "$FINAL" || fail "could not move backup into place at $FINAL"
+
+      find "$DEST" \( -name 'kuma-*.db' -o -name '.kuma-*.db.tmp' \) -mtime +7 -delete
+
+      logger -t kuma-db-backup -p daemon.info "backup succeeded: $FINAL"
 
 - name: Report how to reach Kuma
   debug:
