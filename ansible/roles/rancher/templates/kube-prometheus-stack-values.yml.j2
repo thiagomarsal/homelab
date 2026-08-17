@@ -22,7 +22,11 @@ alertmanager:
       smtp_smarthost: 'smtp.gmail.com:587'
       smtp_from: '{{ alert_smtp_user }}'
       smtp_auth_username: '{{ alert_smtp_user }}'
-      smtp_auth_password: '{{ alert_smtp_password }}'
+      # Google displays app passwords in four groups of four for readability, and it is
+      # easy to vault the value with those spaces still in it. SMTP AUTH does not accept
+      # them — Gmail answers "535 5.7.8 Username and Password not accepted" — so strip
+      # whitespace here rather than depending on how the value was pasted into vault.
+      smtp_auth_password: '{{ alert_smtp_password | replace(" ", "") }}'
       smtp_require_tls: true
 
     route:
