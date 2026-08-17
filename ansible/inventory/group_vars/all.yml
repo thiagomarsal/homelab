@@ -63,6 +63,29 @@ grafana_admin_password: !vault |
           3032646239636665340a343630343463323639313430666261383965636435643031633736393465
           6465
 
+# Alertmanager SMTP delivery + basic-auth for the Alertmanager UI/API.
+# alertmanager_hostname and alertmanager_basicauth_user are plaintext — not secrets.
+#
+# The vault vars below (alert_smtp_user, alert_smtp_password, alert_email_to,
+# alertmanager_basicauth_hash) are NOT set here yet. This operator must add them
+# before running the monitoring tags. Generate them with:
+#
+#   ansible-vault encrypt_string '<sending-address@gmail.com>' --name alert_smtp_user
+#   ansible-vault encrypt_string '<16-char-gmail-app-password>' --name alert_smtp_password
+#   ansible-vault encrypt_string '<recipient@address>' --name alert_email_to
+#
+#   The basic-auth credential is stored as a bcrypt HASH, not a password, so the
+#   Ansible control host never needs the `passlib` library at template-render time.
+#   Generate the hash locally with:
+#     htpasswd -nbB admin '<password-you-choose>'
+#   That prints "admin:$2y$...". Vault only the part AFTER the colon:
+#   ansible-vault encrypt_string '<$2y$...-hash-from-htpasswd>' --name alertmanager_basicauth_hash
+#
+# Paste each resulting "!vault |" block here, alongside the other vault vars in
+# this file, before deploying.
+alertmanager_hostname: "alertmanager.tmf-solutions.com"
+alertmanager_basicauth_user: "admin"
+
 # n8n automation SSH key — public key only, private key lives in n8n credential store (not git).
 # Installed to root's authorized_keys with a forced command (see n8n-svc-user.yml), so the key
 # can only ever run the apt-upgrade/healthcheck wrapper script, never an arbitrary command.

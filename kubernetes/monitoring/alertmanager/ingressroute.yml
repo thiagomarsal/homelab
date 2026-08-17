@@ -1,0 +1,20 @@
+---
+# Kuma runs outside the cluster and needs a reachable endpoint to probe.
+# Basic-auth guards it; the silence UI becomes browser-usable as a side benefit.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: alertmanager
+  namespace: monitoring
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`alertmanager.tmf-solutions.com`)
+      kind: Rule
+      middlewares:
+        - name: alertmanager-auth
+      services:
+        - name: alertmanager-operated
+          port: 9093
+  tls: {}  # uses TLSStore default — wildcard cert from traefik namespace

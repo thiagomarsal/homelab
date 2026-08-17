@@ -2,10 +2,135 @@
 # Tuned for K3s homelab — no Alertmanager, Longhorn storage, Traefik ingress
 
 alertmanager:
-  enabled: false
+  enabled: true
+  alertmanagerSpec:
+    replicas: 1
+    retention: 120h
+    # emptyDir on purpose — NOT Longhorn. Longhorn degradation is one of the
+    # things Alertmanager must report, so its state must not depend on Longhorn.
+    # Cost: silences and dedup state are lost on restart (one repeat email).
+    storage: {}
+    resources:
+      requests:
+        cpu: 10m
+        memory: 48Mi
+      limits:
+        memory: 128Mi
+  config:
+    global:
+      resolve_timeout: 5m
+      smtp_smarthost: 'smtp.gmail.com:587'
+      smtp_from: '{{ alert_smtp_user }}'
+      smtp_auth_username: '{{ alert_smtp_user }}'
+      smtp_auth_password: '{{ alert_smtp_password }}'
+      smtp_require_tls: true
+
+    route:
+      receiver: email-warning
+      group_by: ['alertname', 'pve_host']
+      group_wait: 45s
+      group_interval: 5m
+      repeat_interval: 24h
+      routes:
+        # Watchdog is the upstream always-firing heartbeat. Nothing consumes it
+        # yet (no external dead-man's switch by decision), so drop it.
+        - matchers: ['alertname="Watchdog"']
+          receiver: 'null'
+        - matchers: ['severity="info"']
+          receiver: 'null'
+        - matchers: ['severity="critical"']
+          receiver: email-critical
+          group_wait: 30s
+          repeat_interval: 2h
+        - matchers: ['severity="warning"']
+          receiver: email-warning
+
+    inhibit_rules:
+      # A partition reads as one event, not eight host failures.
+      - source_matchers: ['alertname="PVEClusterNotQuorate"']
+        target_matchers: ['alertname="PVEHostDown"']
+
+      # The k8s cascade is muted via `node`, which the guest alert carries from
+      # pve_guest_info.name. No static IP-to-host map is needed anywhere.
+      - source_matchers: ['alertname="PVEGuestDownUnexpectedly"']
+        target_matchers: ['alertname!="PVEGuestDownUnexpectedly"']
+        equal: ['node']
+
+      # Host-level noise about a host already known to be down. PVEGuestDownUnexpectedly
+      # is deliberately NOT a target: you want to know which guests died, and that
+      # alert is the inhibitor for the k8s cascade rule above.
+      - source_matchers: ['alertname="PVEHostDown"']
+        target_matchers: ['alertname=~"PVEStorage.*|PVEHostMemoryPressure|PVEExporterTargetDown"']
+        equal: ['pve_host']
+
+      # While a node is down, mute pod-level churn cluster-wide. Coarse on
+      # purpose: KSM pod alerts have no reliable node label. Trade-off is that an
+      # unrelated pod problem can hide during a node outage — the runbook says to
+      # re-check pods after recovery.
+      - source_matchers: ['alertname=~"KubeNodeNotReady|KubeNodeUnreachable"']
+        target_matchers: ['alertname=~"KubePod.*|KubeDeployment.*|KubeStatefulSet.*|KubeDaemonSet.*"']
+
+      - source_matchers: ['severity="critical"']
+        target_matchers: ['severity="warning"']
+        equal: ['alertname', 'pve_host']
+
+      - source_matchers: ['alertname="LonghornVolumeFaulted"']
+        target_matchers: ['alertname="LonghornVolumeDegraded"']
+        equal: ['volume']
+
+    receivers:
+      - name: 'null'
+
+      - name: email-critical
+        email_configs:
+          - to: '{{ alert_email_to }}'
+            send_resolved: true
+            headers:
+              subject: {% raw %}'[CRIT] {{ .CommonLabels.alertname }} {{ .CommonLabels.pve_host }}{{ .CommonLabels.node }}'{% endraw %}
+
+            html: {% raw %}'{{ range .Alerts }}<b>{{ .Labels.alertname }}</b> ({{ .Labels.severity }})<br>{{ .Annotations.summary }}<br>{{ .Annotations.description }}<br>started {{ .StartsAt }}<br><br>{{ end }}'{% endraw %}
+
+
+      - name: email-warning
+        email_configs:
+          - to: '{{ alert_email_to }}'
+            send_resolved: true
+            headers:
+              subject: {% raw %}'[warn] {{ .CommonLabels.alertname }} {{ .CommonLabels.pve_host }}{{ .CommonLabels.node }}'{% endraw %}
+
+            html: {% raw %}'{{ range .Alerts }}<b>{{ .Labels.alertname }}</b><br>{{ .Annotations.summary }}<br>{{ .Annotations.description }}<br>started {{ .StartsAt }}<br><br>{{ end }}'{% endraw %}
+
+# k3s trips these permanently — a standing wall of firing alerts trains you to
+# ignore email. Provisional list from the alerting design spec — NOT yet
+# confirmed against 48h of live behaviour (Task 4's observation window has not
+# run). Revisit and adjust once that data exists.
+defaultRules:
+  create: true
+  rules:
+    kubeApiserverAvailability: false
+    kubeApiserverBurnrate: false
+    kubeApiserverHistogram: false
+    kubeApiserverSlos: false
+    kubernetesResources: false
+    kubernetesSystem: false
+
+nodeExporter:
+  enabled: true
+  prometheus:
+    monitor:
+      relabelings:
+        # node-exporter series carry only instance=IP:9100 by default, so
+        # nothing could correlate them with a k3s node name. Inhibition and the
+        # runbook both key on `node`.
+        - source_labels: [__meta_kubernetes_pod_node_name]
+          target_label: node
 
 prometheus:
   prometheusSpec:
+    # Prometheus alone uses ~1.75Gi. Keep it off master-3, which is the tightest
+    # host and also fronts the pfSense VM.
+    nodeSelector:
+      kubernetes.io/hostname: k3s-worker-2
     retention: 15d
     retentionSize: "7GB"
     storageSpec:
@@ -94,9 +219,6 @@ kubeProxy:
   enabled: false
 kubeEtcd:
   enabled: false
-
-nodeExporter:
-  enabled: true
 
 kubeStateMetrics:
   enabled: true

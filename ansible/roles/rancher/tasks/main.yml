@@ -295,6 +295,36 @@
   changed_when: false
   tags: [monitoring]
 
+- name: Render Alertmanager basic-auth secret
+  template:
+    src: alertmanager-basicauth-secret.yml.j2
+    dest: /tmp/alertmanager-basicauth-secret.yml
+    mode: '0600'
+  tags: [monitoring]
+
+- name: Create Alertmanager basic-auth secret
+  command: k3s kubectl apply -f /tmp/alertmanager-basicauth-secret.yml
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  changed_when: false
+  tags: [monitoring]
+
+- name: Remove Alertmanager basic-auth secret temp file
+  file:
+    path: /tmp/alertmanager-basicauth-secret.yml
+    state: absent
+  tags: [monitoring]
+
+- name: Apply Alertmanager middleware and IngressRoute
+  command: >-
+    k3s kubectl apply
+    -f /tmp/homelab-k8s/monitoring/alertmanager/basicauth.yml
+    -f /tmp/homelab-k8s/monitoring/alertmanager/ingressroute.yml
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  changed_when: false
+  tags: [monitoring]
+
 # ============================================================
 # Phase 10: Deploy PVE exporter
 # ============================================================
