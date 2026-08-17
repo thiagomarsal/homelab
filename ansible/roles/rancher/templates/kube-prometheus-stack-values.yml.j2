@@ -96,7 +96,7 @@ alertmanager:
           - to: '{{ alert_email_to }}'
             send_resolved: true
             headers:
-              subject: {% raw %}'[CRIT] {{ .CommonLabels.alertname }} {{ .CommonLabels.pve_host }}{{ .CommonLabels.node }}'{% endraw %}
+              subject: {% raw %}'{{ if .CommonLabels.selftest }}[SELFTEST] {{ end }}[CRIT] {{ .CommonLabels.alertname }}{{ with .CommonLabels.pve_host }} {{ . }}{{ end }}{{ with .CommonLabels.node }} {{ . }}{{ end }}'{% endraw %}
 
             html: {% raw %}'{{ range .Alerts }}<b>{{ .Labels.alertname }}</b> ({{ .Labels.severity }})<br>{{ .Annotations.summary }}<br>{{ .Annotations.description }}<br>started {{ .StartsAt }}<br><br>{{ end }}'{% endraw %}
 
@@ -106,7 +106,7 @@ alertmanager:
           - to: '{{ alert_email_to }}'
             send_resolved: true
             headers:
-              subject: {% raw %}'[warn] {{ .CommonLabels.alertname }} {{ .CommonLabels.pve_host }}{{ .CommonLabels.node }}'{% endraw %}
+              subject: {% raw %}'{{ if .CommonLabels.selftest }}[SELFTEST] {{ end }}[warn] {{ .CommonLabels.alertname }}{{ with .CommonLabels.pve_host }} {{ . }}{{ end }}{{ with .CommonLabels.node }} {{ . }}{{ end }}'{% endraw %}
 
             html: {% raw %}'{{ range .Alerts }}<b>{{ .Labels.alertname }}</b><br>{{ .Annotations.summary }}<br>{{ .Annotations.description }}<br>started {{ .StartsAt }}<br><br>{{ end }}'{% endraw %}
 

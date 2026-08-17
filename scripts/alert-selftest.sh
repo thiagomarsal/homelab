@@ -95,6 +95,21 @@ for a in json.load(sys.stdin):
 "
 }
 
+# Resolve a synthetic alert by re-posting it with endsAt in the past.
+#
+# Without this, the mechanism tests (inhibit, silence) leave their synthetic
+# alerts active. Alertmanager then emails them once the inhibitor or silence
+# goes away -- so a test that proves suppression works pages you seconds later.
+# The delivery tests (critical/warning) deliberately do NOT resolve: landing in
+# the inbox is the whole point of those.
+resolve_alert() {  # name extra_label_json
+  curl -sf -XPOST "$AM/api/v2/alerts" -H 'Content-Type: application/json' -d "[{
+    \"labels\": {\"alertname\": \"$1\", \"severity\": \"critical\", \"selftest\": \"true\" $2},
+    \"startsAt\": \"$(date -u -d '-2 min' +%Y-%m-%dT%H:%M:%SZ)\",
+    \"endsAt\": \"$(date -u -d '-1 min' +%Y-%m-%dT%H:%M:%SZ)\"
+  }]" >/dev/null 2>&1 && echo "resolved $1"
+}
+
 case "${1:?usage: critical|warning|info|inhibit|silence}" in
   critical) post_alert SelfTestCritical critical ', "pve_host": "pve99"' ;;
   warning)  post_alert SelfTestWarning  warning  ', "pve_host": "pve99"' ;;
@@ -115,6 +130,8 @@ case "${1:?usage: critical|warning|info|inhibit|silence}" in
       echo "ERROR: KubeNodeNotReady is not in the inhibited set — the node-down inhibition cascade is broken." >&2
       exit 1
     fi
+    resolve_alert PVEGuestDownUnexpectedly ', "node": "k3s-selftest", "pve_host": "pve99"'
+    resolve_alert KubeNodeNotReady         ', "node": "k3s-selftest"'
     ;;
   silence)
     silence_resp=$(curl -sf -m5 -XPOST "$AM/api/v2/silences" -H 'Content-Type: application/json' -d "{
@@ -139,6 +156,13 @@ case "${1:?usage: critical|warning|info|inhibit|silence}" in
       exit 1
     fi
     echo "$silenced" | sed 's/^/  silenced by this silence: /'
+    # Resolve the synthetic alert BEFORE lifting the silence. Deleting the
+    # silence while the alert is still active makes Alertmanager deliver it
+    # immediately — so this test would prove silencing works and then page you
+    # about its own test alert seconds later. (It did exactly that on
+    # 2026-08-17.)
+    resolve_alert SelfTestCritical ', "pve_host": "pve99"'
+    sleep 3
     if curl -sf -m5 -XDELETE "$AM/api/v2/silence/$ID" >/dev/null 2>&1; then
       echo "silence $ID deleted"
       ID=""  # cleared so the EXIT trap does not redundantly retry a delete that already succeeded
