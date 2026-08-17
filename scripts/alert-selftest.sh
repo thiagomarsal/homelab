@@ -102,9 +102,15 @@ for a in json.load(sys.stdin):
 # goes away -- so a test that proves suppression works pages you seconds later.
 # The delivery tests (critical/warning) deliberately do NOT resolve: landing in
 # the inbox is the whole point of those.
-resolve_alert() {  # name extra_label_json
+resolve_alert() {  # name severity extra_label_json
+  # Severity is a PARAMETER, not a constant. Alertmanager identifies an alert by
+  # its complete label set, so resolving KubeNodeNotReady{severity=critical} does
+  # nothing to a live KubeNodeNotReady{severity=warning} -- it silently creates a
+  # different, already-resolved alert while the real one keeps running to its
+  # resolve_timeout. That bug hid behind repeat_interval on 2026-08-17: the
+  # counter showed no new email only because the alert had already been notified.
   curl -sf -XPOST "$AM/api/v2/alerts" -H 'Content-Type: application/json' -d "[{
-    \"labels\": {\"alertname\": \"$1\", \"severity\": \"critical\", \"selftest\": \"true\" $2},
+    \"labels\": {\"alertname\": \"$1\", \"severity\": \"$2\", \"selftest\": \"true\" $3},
     \"startsAt\": \"$(date -u -d '-2 min' +%Y-%m-%dT%H:%M:%SZ)\",
     \"endsAt\": \"$(date -u -d '-1 min' +%Y-%m-%dT%H:%M:%SZ)\"
   }]" >/dev/null 2>&1 && echo "resolved $1"
@@ -130,8 +136,14 @@ case "${1:?usage: critical|warning|info|inhibit|silence}" in
       echo "ERROR: KubeNodeNotReady is not in the inhibited set — the node-down inhibition cascade is broken." >&2
       exit 1
     fi
-    resolve_alert PVEGuestDownUnexpectedly ', "node": "k3s-selftest", "pve_host": "pve99"'
-    resolve_alert KubeNodeNotReady         ', "node": "k3s-selftest"'
+    # ORDER MATTERS. Resolve the inhibited TARGET first, then the inhibitor.
+    # Doing it the other way round removes the suppression while the target is
+    # still active, so it becomes a live warning for the moment before its own
+    # resolve lands -- and Alertmanager duly emails it. That is exactly what
+    # happened on 2026-08-17: '[SELFTEST] [warn] KubeNodeNotReady k3s-selftest'.
+    resolve_alert KubeNodeNotReady         warning  ', "node": "k3s-selftest"'
+    sleep 2
+    resolve_alert PVEGuestDownUnexpectedly critical ', "node": "k3s-selftest", "pve_host": "pve99"'
     ;;
   silence)
     silence_resp=$(curl -sf -m5 -XPOST "$AM/api/v2/silences" -H 'Content-Type: application/json' -d "{
@@ -161,7 +173,7 @@ case "${1:?usage: critical|warning|info|inhibit|silence}" in
     # immediately — so this test would prove silencing works and then page you
     # about its own test alert seconds later. (It did exactly that on
     # 2026-08-17.)
-    resolve_alert SelfTestCritical ', "pve_host": "pve99"'
+    resolve_alert SelfTestCritical critical ', "pve_host": "pve99"'
     sleep 3
     if curl -sf -m5 -XDELETE "$AM/api/v2/silence/$ID" >/dev/null 2>&1; then
       echo "silence $ID deleted"
