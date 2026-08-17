@@ -113,6 +113,33 @@ basic-auth password is only recoverable as a bcrypt hash
 from git or vault at all — so having Kuma hold a copy of it would have been a
 second, unrecoverable-if-lost place for that credential to live.
 
+## How these monitors were created (2026-08-17)
+
+They were **seeded directly into Kuma's SQLite**, not clicked in through the UI:
+one `notification` row (SMTP, `is_default=1`), 12 `monitor` rows, and a
+`monitor_notification` row linking each monitor to the notification — then a
+`docker restart uptime-kuma` so Kuma loaded them. Kuma has no REST API for
+monitor creation (its UI drives socket.io), so SQL was the only scriptable path.
+
+That bypasses Kuma's own validation, so it was proven with a drill rather than
+assumed: a throwaway `ping` monitor against a dead IP (192.168.1.99, 1 retry)
+went DOWN and delivered a `[KUMA] ... is DOWN` email, after which the drill
+monitor was deleted. **If you ever re-seed this way, run that drill again** —
+a malformed `notification.config` JSON fails silently, and silence from a
+watcher is indistinguishable from everything being fine.
+
+`monitor_notification.id` has no AUTOINCREMENT, so ids must be supplied
+explicitly when inserting.
+
+### DNS note
+
+`alertmanager.tmf-solutions.com` resolves via a **CNAME in pihole's
+`pihole.toml`** (`[dns] cnameRecords`) pointing at `traefik.tmf-solutions.com`,
+which `[dns] hosts` maps to 192.168.1.61 — the same pattern grafana uses.
+pihole here is **v6**: it does NOT read `/etc/pihole/custom.list`, and the
+`pihole` CLI is not on PATH, so `pihole restartdns` silently does nothing.
+Reload records with `systemctl restart pihole-FTL` inside CT 101.
+
 ## Backup
 
 - **What**: nightly cron job at `/etc/cron.daily/kuma-db-backup` inside the
