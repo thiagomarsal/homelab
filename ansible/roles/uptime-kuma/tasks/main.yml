@@ -55,21 +55,27 @@
   changed_when: false
 
 - name: Install Docker and sqlite3 inside the container
+  # Every continuation line below MUST sit at exactly the same indentation as
+  # the first. In a YAML folded scalar (>-), a MORE-indented line keeps its
+  # newline instead of folding into a space — so the original version, whose
+  # continuations were indented one extra space, reached bash as separate lines
+  # and died with rc=127 "ca-certificates: command not found": the package list
+  # had become its own command instead of arguments to apt-get install.
   command: >-
     pct exec {{ kuma_ctid }} -- bash -lc
     "apt-get update -qq &&
-     DEBIAN_FRONTEND=noninteractive apt-get install -y -qq
-     ca-certificates curl gnupg sqlite3 iputils-ping &&
-     install -m 0755 -d /etc/apt/keyrings &&
-     curl -fsSL https://download.docker.com/linux/debian/gpg
-       -o /etc/apt/keyrings/docker.asc &&
-     chmod a+r /etc/apt/keyrings/docker.asc &&
-     echo 'deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc]
-       https://download.docker.com/linux/debian bookworm stable'
-       > /etc/apt/sources.list.d/docker.list &&
-     apt-get update -qq &&
-     DEBIAN_FRONTEND=noninteractive apt-get install -y -qq
-     docker-ce docker-ce-cli containerd.io"
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq
+    ca-certificates curl gnupg sqlite3 iputils-ping &&
+    install -m 0755 -d /etc/apt/keyrings &&
+    curl -fsSL https://download.docker.com/linux/debian/gpg
+    -o /etc/apt/keyrings/docker.asc &&
+    chmod a+r /etc/apt/keyrings/docker.asc &&
+    echo 'deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc]
+    https://download.docker.com/linux/debian bookworm stable'
+    > /etc/apt/sources.list.d/docker.list &&
+    apt-get update -qq &&
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq
+    docker-ce docker-ce-cli containerd.io"
   when: kuma_docker_present.rc != 0
   register: docker_install
   changed_when: "'Setting up docker-ce' in docker_install.stdout"
@@ -99,12 +105,15 @@
   changed_when: false
 
 - name: Create and start the Uptime Kuma container (does not exist yet)
+  # Same folded-scalar rule as the Docker install above: keep every
+  # continuation at this exact indentation, or the extra indent preserves the
+  # newline and bash gets `-p 3001:3001` as a command of its own.
   command: >-
     pct exec {{ kuma_ctid }} -- bash -lc
     "docker run -d --restart=always
-       -p {{ kuma_port }}:3001
-       -v uptime-kuma:/app/data
-       --name uptime-kuma {{ kuma_image }}"
+    -p {{ kuma_port }}:3001
+    -v uptime-kuma:/app/data
+    --name uptime-kuma {{ kuma_image }}"
   when: kuma_container_state.rc != 0
   changed_when: true
 
