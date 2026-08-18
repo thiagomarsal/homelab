@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Auburn Fields HOA — Unit Map</title>
+<style>
+  :root {
+    --bg: #f5f3ec;
+    --bg-raised: #ffffff;
+    --ink: #272b1f;
+    --ink-soft: #5b6152;
+    --line: #d9d5c6;
+    --line-strong: #b9b39d;
+    --accent: #4a6741;
+    --accent-soft: #e3e9de;
+    --rented: #b8791f;
+    --rented-bg: #f6e6cc;
+    --rented-bg-strong: #e9c384;
+    --shadow: 0 1px 2px rgba(40,35,20,0.06), 0 6px 20px rgba(40,35,20,0.05);
+    --font-display: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    --font-body: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #15180f;
+      --bg-raised: #1d2116;
+      --ink: #e9e7db;
+      --ink-soft: #a7ab97;
+      --line: #333722;
+      --line-strong: #454a2e;
+      --accent: #8fb37f;
+      --accent-soft: #26301f;
+      --rented: #e0a94a;
+      --rented-bg: #3a2d14;
+      --rented-bg-strong: #5a4419;
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15180f;
+    --bg-raised: #1d2116;
+    --ink: #e9e7db;
+    --ink-soft: #a7ab97;
+    --line: #333722;
+    --line-strong: #454a2e;
+    --accent: #8fb37f;
+    --accent-soft: #26301f;
+    --rented: #e0a94a;
+    --rented-bg: #3a2d14;
+    --rented-bg-strong: #5a4419;
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35);
+  }
+  :root[data-theme="light"] {
+    --bg: #f5f3ec;
+    --bg-raised: #ffffff;
+    --ink: #272b1f;
+    --ink-soft: #5b6152;
+    --line: #d9d5c6;
+    --line-strong: #b9b39d;
+    --accent: #4a6741;
+    --accent-soft: #e3e9de;
+    --rented: #b8791f;
+    --rented-bg: #f6e6cc;
+    --rented-bg-strong: #e9c384;
+    --shadow: 0 1px 2px rgba(40,35,20,0.06), 0 6px 20px rgba(40,35,20,0.05);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-body);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 2.5rem 1.5rem 4rem;
+  }
+
+  header.page {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 1.5rem;
+    padding-bottom: 1.75rem;
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 2rem;
+  }
+  .title-block .eyebrow {
+    font-size: 0.72rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--accent);
+    font-weight: 600;
+    margin: 0 0 0.4rem;
+  }
+  .title-block h1 {
+    font-family: var(--font-display);
+    font-weight: 500;
+    font-size: 2.1rem;
+    margin: 0;
+    text-wrap: balance;
+    letter-spacing: 0.01em;
+  }
+  .title-block p.sub {
+    margin: 0.5rem 0 0;
+    color: var(--ink-soft);
+    font-size: 0.95rem;
+    max-width: 46ch;
+  }
+
+  .stats {
+    display: flex;
+    gap: 1.1rem;
+  }
+  .stat {
+    background: var(--bg-raised);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 0.65rem 1rem;
+    min-width: 92px;
+    box-shadow: var(--shadow);
+  }
+  .stat .n {
+    font-variant-numeric: tabular-nums;
+    font-size: 1.5rem;
+    font-weight: 700;
+    display: block;
+    line-height: 1.1;
+  }
+  .stat .l {
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--ink-soft);
+  }
+  .stat.rented .n { color: var(--rented); }
+
+  .toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1.75rem;
+    flex-wrap: wrap;
+  }
+  .legend {
+    display: flex;
+    gap: 1.35rem;
+    flex-wrap: wrap;
+    font-size: 0.82rem;
+    color: var(--ink-soft);
+  }
+  .legend .item { display: flex; align-items: center; gap: 0.45rem; }
+  .swatch {
+    width: 13px; height: 13px; border-radius: 3.5px;
+    background: var(--bg-raised);
+    border: 1.5px solid var(--line-strong);
+    flex: none;
+  }
+  .swatch.rented { background: var(--rented-bg-strong); border-color: var(--rented); }
+
+  .filter-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.82rem;
+    color: var(--ink-soft);
+    cursor: pointer;
+    user-select: none;
+  }
+  .filter-toggle input { accent-color: var(--rented); width: 15px; height: 15px; }
+
+  section.street {
+    margin-bottom: 2.6rem;
+  }
+  .street-head {
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
+    margin-bottom: 0.9rem;
+    flex-wrap: wrap;
+  }
+  .street-head h2 {
+    font-family: var(--font-display);
+    font-size: 1.32rem;
+    font-weight: 500;
+    margin: 0;
+  }
+  .street-count {
+    font-size: 0.78rem;
+    color: var(--ink-soft);
+  }
+  .street-count b { color: var(--ink); font-variant-numeric: tabular-nums; }
+
+  .block {
+    position: relative;
+    margin-bottom: 1.4rem;
+  }
+  .block:last-child { margin-bottom: 0; }
+  .road-label {
+    font-size: 0.68rem;
+    color: var(--ink-soft);
+    letter-spacing: 0.04em;
+    margin-bottom: 0.4rem;
+  }
+  .strip-outer {
+    overflow-x: auto;
+    padding-bottom: 0.6rem;
+  }
+  .road {
+    position: relative;
+    display: flex;
+    gap: 0;
+    min-width: max-content;
+    padding-top: 10px;
+  }
+  .road::before {
+    content: "";
+    position: absolute;
+    left: 0; right: 0; top: 0;
+    height: 3px;
+    background: repeating-linear-gradient(90deg, var(--line-strong) 0 14px, transparent 14px 22px);
+    border-radius: 2px;
+  }
+  .lot {
+    flex: none;
+    width: 108px;
+    border-right: 1px solid var(--line);
+    padding: 0.65rem 0.7rem 0.6rem;
+    background: var(--bg-raised);
+    transition: background 0.15s ease;
+  }
+  .lot:first-child { border-top-left-radius: 8px; border-bottom-left-radius: 8px; }
+  .lot:last-child { border-right: none; border-top-right-radius: 8px; border-bottom-right-radius: 8px; }
+  .lot.rented { background: var(--rented-bg); }
+
+  .lot .num {
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+    font-size: 0.98rem;
+    display: block;
+  }
+  .lot .rest {
+    font-size: 0.68rem;
+    color: var(--ink-soft);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .lot .tag {
+    margin-top: 0.4rem;
+    display: inline-block;
+    font-size: 0.66rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--rented);
+  }
+  .lot .owner {
+    display: block;
+    margin-top: 0.15rem;
+    font-size: 0.72rem;
+    color: var(--ink);
+    font-style: italic;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .lot.dim { opacity: 0.28; }
+
+  footer.note {
+    margin-top: 2.5rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--line);
+    font-size: 0.78rem;
+    color: var(--ink-soft);
+  }
+  footer.note code {
+    background: var(--accent-soft);
+    padding: 0.1rem 0.35rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+  }
+
+  @media (max-width: 640px) {
+    .wrap { padding: 1.5rem 1rem 3rem; }
+    .title-block h1 { font-size: 1.6rem; }
+    .stats { gap: 0.6rem; }
+    .stat { min-width: 72px; padding: 0.5rem 0.7rem; }
+  }
+</style>
+</head>
+<body>
+
+
+<div class="wrap">
+  <header class="page">
+    <div class="title-block">
+      <p class="eyebrow">Auburn Fields HOA · Draper, UT</p>
+      <h1>Owned vs. Rented Units</h1>
+      <p class="sub">All 100 addresses on record, laid out street by street in house-number order. Amber lots are renter-occupied per the 2026 rental roll.</p>
+    </div>
+    <div class="stats">
+      <div class="stat">
+        <span class="n" id="stat-total">–</span>
+        <span class="l">Units</span>
+      </div>
+      <div class="stat">
+        <span class="n" id="stat-owned">–</span>
+        <span class="l">Owned</span>
+      </div>
+      <div class="stat rented">
+        <span class="n" id="stat-rented">–</span>
+        <span class="l">Rented</span>
+      </div>
+    </div>
+  </header>
+
+  <div class="toolbar">
+    <div class="legend">
+      <span class="item"><span class="swatch"></span> Owned</span>
+      <span class="item"><span class="swatch rented"></span> Rented</span>
+    </div>
+    <label class="filter-toggle">
+      <input type="checkbox" id="rentedOnly" />
+      Show rented units only
+    </label>
+  </div>
+
+  <div id="streets"></div>
+
+  <footer class="note">
+    Sources: <code>Rental Units 2026.xlsx</code> (28 renter-occupied units) cross-referenced by address to
+    <code>Auburn Fields Parking (Responses).xlsx → Registered Address</code> (100 units on file).
+    <strong>700 E. Auburn Fields Way</strong> (Rimrock Construction) is one of the 100 and is shown at the
+    end of Auburn Fields Way.
+  </footer>
+</div>
+
+<script>
+const DATA = __DATA_JSON__;
+
+const streetsEl = document.getElementById('streets');
+document.getElementById('stat-total').textContent = DATA.summary.total;
+document.getElementById('stat-rented').textContent = DATA.summary.rented;
+document.getElementById('stat-owned').textContent = DATA.summary.owned;
+
+function segment(items) {
+  const segs = [];
+  let cur = [];
+  let prev = null;
+  for (const it of items) {
+    if (prev !== null && Math.abs(it.num - prev) > 100) {
+      segs.push(cur);
+      cur = [];
+    }
+    cur.push(it);
+    prev = it.num;
+  }
+  if (cur.length) segs.push(cur);
+  return segs;
+}
+
+const STREET_ORDER = ["SHADOW VIEW LN", "AUTUMN BRANCH WAY", "AUBURN FIELDS WAY", "HARVEST BEND WAY"];
+
+for (const streetName of STREET_ORDER) {
+  const items = DATA.streets[streetName];
+  if (!items) continue;
+  const rentedCount = items.filter(x => x.rented).length;
+
+  const section = document.createElement('section');
+  section.className = 'street';
+
+  const head = document.createElement('div');
+  head.className = 'street-head';
+  head.innerHTML = `<h2>${titleCase(streetName)}</h2><span class="street-count"><b>${items.length}</b> units · <b>${rentedCount}</b> rented</span>`;
+  section.appendChild(head);
+
+  const segs = segment(items);
+  segs.forEach((seg, i) => {
+    const block = document.createElement('div');
+    block.className = 'block';
+    const label = document.createElement('div');
+    label.className = 'road-label';
+    label.textContent = `${seg[0].num}–${seg[seg.length-1].num}`;
+    block.appendChild(label);
+
+    const outer = document.createElement('div');
+    outer.className = 'strip-outer';
+    const road = document.createElement('div');
+    road.className = 'road';
+
+    seg.forEach(lot => {
+      const el = document.createElement('div');
+      el.className = 'lot' + (lot.rented ? ' rented' : '');
+      el.dataset.rented = lot.rented ? '1' : '0';
+      let html = `<span class="num">${lot.num}</span>`;
+      if (lot.rented) {
+        html += `<span class="tag">Rented</span>`;
+        if (lot.owner) html += `<span class="owner" title="${lot.owner}">${lot.owner}</span>`;
+      }
+      el.innerHTML = html;
+      road.appendChild(el);
+    });
+
+    outer.appendChild(road);
+    block.appendChild(outer);
+    section.appendChild(block);
+  });
+
+  streetsEl.appendChild(section);
+}
+
+function titleCase(s) {
+  return s.toLowerCase().replace(/\b\w/g, c => c.toUpperCase())
+    .replace(/\bLn\b/i, 'Ln').replace(/\bWay\b/i, 'Way');
+}
+
+document.getElementById('rentedOnly').addEventListener('change', (e) => {
+  const only = e.target.checked;
+  document.querySelectorAll('.lot').forEach(el => {
+    el.classList.toggle('dim', only && el.dataset.rented === '0');
+  });
+});
+</script>
+
+</body>
+</html>

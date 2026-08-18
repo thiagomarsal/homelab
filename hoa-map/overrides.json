@@ -1,0 +1,10 @@
+{
+  "_comment": "Manual reconciliation for rental-roll rows whose address does not match any row in the Registered Address tab. Keyed by the exact Unit string from Rental Units 2026.xlsx.",
+  "unmatched_rentals": {
+    "700 E. Auburn Fields Way": {
+      "action": "keep_as_extra",
+      "note": "Owner is Rimrock Construction. Does not match any address in the registered-address list under any number. User confirmed 2026-07-09 to keep it and count it toward the 100/28 totals rather than exclude it. Registered-address tab likely needs a data fix upstream."
+    }
+  },
+  "force_total_units": 100
+}

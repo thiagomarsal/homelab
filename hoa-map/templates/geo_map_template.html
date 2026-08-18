@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Auburn Fields HOA — Owned vs Rented Map</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+<style>
+  :root {
+    --bg: #f5f3ec;
+    --bg-raised: #ffffff;
+    --ink: #272b1f;
+    --ink-soft: #5b6152;
+    --line: #d9d5c6;
+    --line-strong: #b9b39d;
+    --accent: #4a6741;
+    --accent-soft: #e3e9de;
+    --rented: #b8791f;
+    --rented-bg: #f6e6cc;
+    --owned-dot: #4a6741;
+    --rented-dot: #c1811f;
+    --shadow: 0 1px 2px rgba(40,35,20,0.06), 0 6px 20px rgba(40,35,20,0.05);
+    --font-display: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    --font-body: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #15180f; --bg-raised: #1d2116; --ink: #e9e7db; --ink-soft: #a7ab97;
+      --line: #333722; --line-strong: #454a2e; --accent: #8fb37f; --accent-soft: #26301f;
+      --rented: #e0a94a; --rented-bg: #3a2d14; --owned-dot: #8fb37f; --rented-dot: #e0a94a;
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15180f; --bg-raised: #1d2116; --ink: #e9e7db; --ink-soft: #a7ab97;
+    --line: #333722; --line-strong: #454a2e; --accent: #8fb37f; --accent-soft: #26301f;
+    --rented: #e0a94a; --rented-bg: #3a2d14; --owned-dot: #8fb37f; --rented-dot: #e0a94a;
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35);
+  }
+  :root[data-theme="light"] {
+    --bg: #f5f3ec; --bg-raised: #ffffff; --ink: #272b1f; --ink-soft: #5b6152;
+    --line: #d9d5c6; --line-strong: #b9b39d; --accent: #4a6741; --accent-soft: #e3e9de;
+    --rented: #b8791f; --rented-bg: #f6e6cc; --owned-dot: #4a6741; --rented-dot: #c1811f;
+    --shadow: 0 1px 2px rgba(40,35,20,0.06), 0 6px 20px rgba(40,35,20,0.05);
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-body);
+    line-height: 1.5;
+    display: flex;
+    flex-direction: column;
+  }
+  header.page {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem 1.5rem;
+    padding: 1.1rem 1.5rem;
+    border-bottom: 1px solid var(--line);
+    background: var(--bg-raised);
+    z-index: 500;
+  }
+  .title-block .eyebrow {
+    font-size: 0.68rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--accent);
+    font-weight: 600;
+    margin: 0 0 0.2rem;
+  }
+  .title-block h1 {
+    font-family: var(--font-display);
+    font-weight: 500;
+    font-size: 1.4rem;
+    margin: 0;
+    text-wrap: balance;
+  }
+  .stats { display: flex; gap: 0.9rem; }
+  .stat {
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    padding: 0.4rem 0.8rem;
+    min-width: 70px;
+    text-align: center;
+  }
+  .stat .n { font-variant-numeric: tabular-nums; font-size: 1.2rem; font-weight: 700; display: block; line-height: 1.1; }
+  .stat .l { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--ink-soft); }
+  .stat.rented .n { color: var(--rented); }
+
+  #map-wrap { position: relative; flex: 1 1 auto; min-height: 0; }
+  #map { position: absolute; inset: 0; }
+
+  .legend-box {
+    position: absolute;
+    bottom: 18px;
+    left: 12px;
+    z-index: 600;
+    background: var(--bg-raised);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 0.6rem 0.85rem;
+    box-shadow: var(--shadow);
+    font-size: 0.8rem;
+    color: var(--ink-soft);
+    display: flex;
+    gap: 1rem;
+  }
+  .legend-box .item { display: flex; align-items: center; gap: 0.4rem; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--bg-raised); box-shadow: 0 0 0 1px var(--line-strong); flex: none; }
+  .dot.owned { background: var(--owned-dot); }
+  .dot.rented { background: var(--rented-dot); }
+
+  .leaflet-popup-content-wrapper {
+    background: var(--bg-raised);
+    color: var(--ink);
+    border-radius: 8px;
+    font-family: var(--font-body);
+  }
+  .leaflet-popup-tip { background: var(--bg-raised); }
+  .popup-addr { font-weight: 700; font-variant-numeric: tabular-nums; display: block; margin-bottom: 0.15rem; }
+  .popup-tag { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em; font-weight: 700; }
+  .popup-tag.rented { color: var(--rented); }
+  .popup-tag.owned { color: var(--accent); }
+  .popup-owner { display: block; font-size: 0.78rem; font-style: italic; color: var(--ink-soft); margin-top: 0.15rem; }
+
+  @media (max-width: 640px) {
+    header.page { padding: 0.85rem 1rem; }
+    .title-block h1 { font-size: 1.15rem; }
+    .stats { gap: 0.5rem; }
+    .stat { min-width: 56px; padding: 0.3rem 0.5rem; }
+  }
+</style>
+</head>
+<body>
+
+<header class="page">
+  <div class="title-block">
+    <p class="eyebrow">Auburn Fields HOA · Draper, UT</p>
+    <h1>Rented Units — Map</h1>
+  </div>
+  <div class="stats">
+    <div class="stat"><span class="n" id="stat-total">–</span><span class="l">Total Units</span></div>
+    <div class="stat rented"><span class="n" id="stat-rented">–</span><span class="l">Rented</span></div>
+  </div>
+</header>
+
+<div id="map-wrap">
+  <div id="map"></div>
+  <div class="legend-box">
+    <span class="item"><span class="dot rented"></span> Rented</span>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script>
+const UNITS = __UNITS_JSON__;
+
+const RENTED = UNITS.filter(u => u.rented);
+
+document.getElementById('stat-total').textContent = __TOTAL_UNITS__;
+document.getElementById('stat-rented').textContent = RENTED.length;
+
+const center = [
+  RENTED.reduce((s,u)=>s+u.lat,0) / RENTED.length,
+  RENTED.reduce((s,u)=>s+u.lon,0) / RENTED.length
+];
+
+const map = L.map('map', { scrollWheelZoom: true }).setView(center, 16);
+
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 20,
+  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+}).addTo(map);
+
+function rentedColor() {
+  return getComputedStyle(document.documentElement).getPropertyValue('--rented-dot').trim();
+}
+
+const bounds = [];
+RENTED.forEach(u => {
+  const marker = L.circleMarker([u.lat, u.lon], {
+    radius: 8,
+    weight: 2,
+    color: '#ffffff',
+    fillColor: rentedColor(),
+    fillOpacity: 0.95,
+  }).addTo(map);
+
+  let html = `<span class="popup-addr">${u.address}</span>`;
+  html += `<span class="popup-tag rented">Rented</span>`;
+  if (u.owner) html += `<span class="popup-owner">${u.owner}</span>`;
+  marker.bindPopup(html);
+  bounds.push([u.lat, u.lon]);
+});
+
+map.fitBounds(bounds, { padding: [30, 30] });
+</script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+# NEVER commit these. This repository is public on GitHub.
+#
+# data/*.xlsx are the source exports and contain personal data belonging to
+# other people: household names, street addresses, phone numbers, email
+# addresses and vehicle license plates (the parking form), plus homeowner names
+# and out-of-state owner addresses (the rental roll). Publishing that is not
+# ours to do, and a push cannot be taken back -- it stays in the history, in any
+# fork, and in GitHub's caches.
+data/
+
+# geocode_cache.json is a list of ~101 real resident addresses. Derived from the
+# same data, same reasoning.
+cache/
+
+# Generated maps. Rebuilt by build.py, and they embed resident names in their
+# labels, so they are both redundant and unsafe to publish.
+output/
