@@ -2,22 +2,44 @@
 
 ## Infrastructure Overview
 
+_Verified live against the cluster and `helm list -A` on 2026-08-18._
+
 | Node | IP | Role | Host |
 |------|----|------|------|
-| k3s-master-1 | 192.168.1.50 | k3s server (bootstrap) | Proxmox VM (Debian 12 cloud-init) |
-| k3s-master-2 | 192.168.1.51 | k3s server | Proxmox VM (Debian 12 cloud-init) |
-| k3s-master-3 | 192.168.1.52 | k3s server | Proxmox VM (Debian 12 cloud-init) |
-| k3s-worker-1 | 192.168.1.53 | k3s agent (on-demand) | Proxmox VM (Debian 12 cloud-init) |
+| k3s-master-1 | 192.168.1.50 | k3s server (bootstrap) | Proxmox VM (Debian 12) |
+| k3s-master-2 | 192.168.1.51 | k3s server | Proxmox VM (Debian 12) |
+| k3s-master-3 | 192.168.1.52 | k3s server | Proxmox VM (Debian 12) |
+| k3s-worker-1 | 192.168.1.53 | k3s agent (always-on) | Proxmox VM (Debian 12 cloud-init) |
 | k3s-worker-2 | 192.168.1.54 | k3s agent (always-on) | Proxmox VM (Debian 12 cloud-init) |
+| k3s-worker-3 | 192.168.1.55 | k3s agent (always-on) | Proxmox VM (Debian 12 cloud-init) |
+| k3s-worker-4 | 192.168.1.56 | k3s agent (always-on) | Proxmox VM (Debian 12 cloud-init), pve07 |
+| k3s-worker-5 | 192.168.1.57 | k3s agent (always-on) | Proxmox VM (Debian 12 cloud-init), pve08 |
 
-- **Proxmox cluster**: 6-node (pve01–pve06), all always-on (no on-demand nodes as of 2026-07-17)
+- **Proxmox cluster**: 8-node (pve01–pve08, 192.168.1.10–17), all always-on, zero on-demand nodes
 - **Storage**: no cluster-wide ZFS pool — Longhorn (in-cluster) is the shared storage layer; each pve host uses local SATA/NVMe/lvmthin storage only
-- **k3s version**: v1.34.5+k3s1
-- **HA VIP**: 192.168.1.60 (kube-vip v0.8.7)
+- **k3s version**: v1.34.5+k3s1 (Debian 12 bookworm, kernel 6.1.0-52, containerd 2.1.5-k3s1)
+- **HA VIP**: 192.168.1.60 (kube-vip v0.8.7 — note: `group_vars/all.yml` pins `kubevip_version: v0.9.1`, live pods still run v0.8.7, so a fresh node-add would drift from the fleet until this is reconciled)
 - **Load Balancer pool**: 192.168.1.61–199 (MetalLB v0.14.9)
 - **Domain**: *.tmf-solutions.com
 - **DNS**: Cloudflare (external) + Pi-hole (internal)
-- **Router**: pfSense 192.168.1.1 — port forwards 80/443 → Traefik MetalLB IP
+- **Router**: pfSense 192.168.1.1 (VM on pve03) — port forwards 80/443 → Traefik MetalLB IP
+
+### Core component versions (helm/live, 2026-08-18)
+
+| Component | Version | Notes |
+|---|---|---|
+| Traefik | v3.6.11 (chart 39.0.6) | k3s-bundled, HelmChartConfig-customized |
+| cert-manager | v1.16.3 | matches `group_vars/all.yml` pin |
+| MetalLB | v0.14.9 | matches pin |
+| Longhorn | v1.11.1 (chart 108.3.0) | **pin in `group_vars/all.yml` says v1.7.2 — stale, deployed release is newer** |
+| kube-vip | v0.8.7 | **pin says v0.9.1 — stale in the other direction, live is older** |
+| kube-prometheus-stack | chart 83.7.0 / operator v0.90.1 | matches pin (deliberately hand-tracked, see comment in `group_vars/all.yml`) |
+| Loki | 3.6.7 | |
+| Promtail | 3.5.1 (chart 6.17.1) | matches pin |
+| pve-exporter | 3.5.1 | matches pin |
+| Rancher | pin says 2.13.3 | not verified live in this pass |
+
+**Action item:** reconcile `kubevip_version` and `longhorn_version` in `ansible/inventory/group_vars/all.yml` with what's actually deployed, so a re-run doesn't silently attempt to change either component's version.
 
 ---
 
@@ -30,7 +52,7 @@ Internet
   └── pfSense 192.168.1.1 (port forward 80/443)
         └── MetalLB → Traefik (k3s)
               ├── n8n.tmf-solutions.com          → n8n Pod (k3s)
-              ├── nextcloud.tmf-solutions.com    → Nextcloud Pod (k3s)
+              ├── drive.tmf-solutions.com        → Nextcloud Pod (k3s)
               ├── immich.tmf-solutions.com       → Immich LXC 192.168.1.20
               ├── rancher.tmf-solutions.com      → Rancher (k3s)
               └── traefik.tmf-solutions.com      → Traefik dashboard (k3s)
@@ -55,13 +77,16 @@ Internet
 
 | Service | Type | Storage | Endpoint |
 |---------|------|---------|----------|
-| n8n | Deployment | Longhorn PVC 5Gi (SQLite) | n8n.tmf-solutions.com |
-| Nextcloud | Deployment + mariadb | Longhorn PVCs (3 replicas) | nextcloud.tmf-solutions.com |
-| HOA WordPress | Deployment + mariadb | Longhorn PVCs (3 replicas) | auburn-fields.com |
+| n8n | Deployment (n8nio/n8n:1.88.0) | Longhorn PVC 5Gi (SQLite) | n8n.tmf-solutions.com |
+| Nextcloud | Deployment (32.0.1-apache) + mariadb:10.11 + redis:7 | Longhorn PVCs (3 replicas) | **drive**.tmf-solutions.com |
+| HOA WordPress | Deployment (wordpress:6.7.2-apache) + mariadb:11.4 | Longhorn PVCs (3 replicas) | auburn-fields.com |
+| porquinho | Deployment + postgres:pg17 (pgvector) StatefulSet | Longhorn | *deployed via Helm from local-built images; **not tracked in this repo** — no manifests under `kubernetes/apps/`* |
 | cloudflare-ddns | CronJob (*/5 min) | None | — |
 | Rancher | Helm (via Ansible) | — | rancher.tmf-solutions.com |
 | cert-manager | Helm | — | — |
 | Longhorn | DaemonSet | — | — |
+
+**Manifests present in `kubernetes/apps/` but not deployed** (no live namespace, no helm release): `jenkins/`, `kafka/`, `redis/` — either planned-but-not-applied or dead, pending triage.
 
 ---
 

@@ -800,10 +800,14 @@ This architecture replaces Nginx Proxy Manager entirely: Traefik handles all ing
 
 > **STATUS: DONE.** This migration was completed; NPM has been decommissioned
 > and Traefik is the sole ingress. Kept here as a historical record of how it
-> was executed, not as a pending plan. Two details below are now stale from
-> when this was written: Longhorn actually runs `numberOfReplicas: 3` (not 1 —
-> see `docs/architecture.md`), and there is no longer an on-demand pve04 (all
-> 6 pve nodes are always-on as of 2026-07-18).
+> was executed, not as a pending plan. Several details below are now stale from
+> when this was written:
+> - Longhorn actually runs `numberOfReplicas: 3` (not 1 — see `docs/architecture.md`).
+> - There is no longer an on-demand pve04 — all pve nodes are always-on, and the
+>   Proxmox cluster is **8 nodes** (pve01–pve08) as of 2026-08-16.
+> - Nextcloud is reached at **`drive.tmf-solutions.com`**, not
+>   `nextcloud.tmf-solutions.com` as step 13 below says, and it is now an
+>   in-cluster Deployment rather than an LXC at 192.168.1.21.
 
 This section documents the phased migration from Nginx Proxy Manager (LXC) to Traefik (k3s built-in) as the single ingress point for all services.
 
