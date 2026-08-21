@@ -1,4 +1,22 @@
 ---
+# Deployed before the install check and with no `when` gate, so it lands on
+# fresh nodes at install time AND reaches already-installed nodes on a re-run.
+# The handler restart is what makes a change take effect on an existing agent.
+- name: Ensure k3s config directory exists
+  file:
+    path: /etc/rancher/k3s
+    state: directory
+    mode: '0755'
+  become: true
+
+- name: Deploy k3s kubelet config (resource reservations)
+  template:
+    src: k3s-config.yaml.j2
+    dest: /etc/rancher/k3s/config.yaml
+    mode: '0644'
+  become: true
+  notify: restart k3s-agent
+
 - name: Check if k3s-agent is already installed
   stat:
     path: /usr/local/bin/k3s

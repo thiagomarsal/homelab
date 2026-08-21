@@ -33,8 +33,12 @@
     - k3s-server
 
 # Phase 4: Join agents
+# serial: 1 — the k3s-agent role can notify a k3s-agent restart (kubelet config
+# changes). Running agents in parallel would bounce every worker at once and
+# take all workloads down together.
 - name: Join k3s agents
   hosts: agents
+  serial: 1
   roles:
     - k3s-agent
 
