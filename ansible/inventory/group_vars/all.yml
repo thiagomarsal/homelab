@@ -22,7 +22,16 @@ k3s_api_port: 6443
 k3s_api_endpoint: "https://{{ k3s_api_vip }}:{{ k3s_api_port }}"
 
 # kube-vip configuration
-kubevip_version: "v0.9.1"
+# Corrected 2026-08-21 from v0.9.1 to match the live DaemonSet image
+# (ghcr.io/kube-vip/kube-vip:v0.8.7). The pin was AHEAD of reality: it is only
+# consumed by roles/k3s-server/templates/kube-vip-daemonset.yml.j2, which is
+# deployed `when: k3s_init`, so nothing had re-applied it and the drift stayed
+# invisible. Left at the deployed version deliberately — upgrading kube-vip
+# moves the API VIP and should be a separate, intentional change, not a
+# side effect of the next bootstrap.
+# Verify with: kubectl -n kube-system get pods -l app.kubernetes.io/name=kube-vip \
+#   -o jsonpath='{.items[0].spec.containers[0].image}'
+kubevip_version: "v0.8.7"
 kubevip_interface: "eth0"  # Default virtio NIC name in Proxmox VMs
 
 # MetalLB configuration
@@ -48,7 +57,29 @@ common_packages:
 traefik_hostname: "traefik.tmf-solutions.com"
 
 # Longhorn
-longhorn_version: "v1.7.2"
+# ⚠ READ BEFORE RUNNING THE LONGHORN TASK — the live release did NOT come from
+# this playbook, so this pin alone cannot make a re-run safe.
+#
+# Deployed (verified 2026-08-21): chart `longhorn-108.3.0+up1.11.1`, app v1.11.1,
+# plus a SEPARATE `longhorn-crd-108.3.0+up1.11.1` release. That packaging is
+# Rancher's (rancher-charts / Rancher catalog). This role instead installs from
+# `https://charts.longhorn.io` (roles/rancher/tasks/main.yml), whose chart
+# versions are plain semver like `1.11.1` and which bundles CRDs into the main
+# chart rather than a second release.
+#
+# So `helm upgrade --install longhorn longhorn/longhorn` would not just change a
+# version — it would switch the release to a different chart lineage, with
+# different default values and contested CRD ownership against the existing
+# longhorn-crd release.
+#
+# The old value here was "v1.7.2": both the wrong version (a downgrade from the
+# deployed v1.11.1, with newer CRDs left in place) and the wrong format for the
+# official repo, which has no `v` prefix. Set to 1.11.1 so that IF the task runs
+# it at least holds the deployed app version instead of downgrading.
+#
+# Before running that task: `helm list -n longhorn-system` and confirm which
+# chart lineage you intend to end up on.
+longhorn_version: "1.11.1"
 
 # kube-prometheus-stack
 # Must track the deployed release, NOT bump independently: the live release is
