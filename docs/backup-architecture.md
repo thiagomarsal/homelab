@@ -63,9 +63,33 @@ just HOA. `rclone` (Google Drive remote, same 15TB account as Layer 1) is
 configured independently on pve01, pve02, and pve03 at
 `/root/.config/rclone/rclone.conf` (`[gdrive]` remote).
 
+> **Layer 3 is not running as documented (checked 2026-08-24).** Two things are
+> wrong:
+>
+> 1. **All five `vzdump` jobs are `enabled 0`** in `/etc/pve/jobs.cfg`. Nothing
+>    below has run on a schedule for some time. The newest artifact on disk is a
+>    41GB `vzdump-qemu-112` from 2026-08-02.
+> 2. **The pihole job still targets pve01**, but pihole (CT101) was migrated to
+>    pve02 on 2026-08-21.
+>
+> `usb-backup` is also declared `nodes pve03` in `storage.cfg`, so it shows as
+> `disabled` on pve01/pve02 — the jobs listed for those hosts could not write
+> there even if they were enabled. Re-enabling Layer 3 means picking a local
+> staging path for pve01/pve02 first. Layers 1 and 2 are unaffected.
+>
+> **`usb-backup` is a real disk on pve03, not a directory on root** — a 466GB
+> ST500LT012 (label `pve-backup`, fstab UUID `3642a5cf-…`, `is_mountpoint 1`).
+> It went missing during the 2026-08-24 chassis swap and was reconnected the
+> same day; the storage is `active` again at 9% used with the 08-02 backup
+> intact. Because fstab uses `nofail`, a boot without that disk attached
+> succeeds silently and leaves `/mnt/usb-backup` an empty directory on root with
+> the storage `inactive` — and hot-plugging it later does not auto-mount it.
+> Check `pvesm status` after any physical work on pve03, and run
+> `mount /mnt/usb-backup` if it reads `inactive`.
+
 ### Schedule (weekly, Sunday)
 
-| Time | Host | VM/CT | What | Local retain (`usb-backup`, a plain dir on root disk) |
+| Time | Host | VM/CT | What | Local retain (`usb-backup`) |
 |---|---|---|---|---|
 | 02:00 | pve01 | 110 | k3s-master-1 | 2 |
 | 02:30 | pve02 | 111 | k3s-master-2 | 2 |

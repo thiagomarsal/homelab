@@ -72,13 +72,23 @@ ansible-playbook playbooks/infra/nic-offload-fix.yml            # whole pve grou
 ```
 
 Installs `e1000e-offload-fix.service`, which reapplies `tso/gso/gro off` at every boot
-and auto-detects the interface name (pve05 uses `eno1`, pve06-08 use `nic0`). Runs
-`serial: 1` so a NIC reconfigure can never disturb quorum on two nodes at once.
+and auto-detects the interface name (pve03 and pve05 use `eno1`, pve06-08 use `nic0`).
+Runs `serial: 1` so a NIC reconfigure can never disturb quorum on two nodes at once.
 
 ## Affected hardware
 
-HP ProDesk 600 G4 DM with **Intel I219-LM** on the `e1000e` driver — pve05, pve06,
-pve07, pve08. All shipped with offloads on.
+Any host with an **Intel I219-LM** on the `e1000e` driver — **pve03, pve05, pve06,
+pve07, pve08**. All shipped with offloads on. pve01, pve02 and pve04 use Realtek
+`r8169` NICs and are not affected.
+
+pve03 is the one that matters most: it runs pfSense, so a hang there takes the whole
+LAN's routing down, not just one k3s node. Replacing its chassis on 2026-08-24 (HP
+EliteDesk 800 G2 DM → Lenovo ThinkCentre M900 Tiny) did **not** remove the exposure —
+the M900 Tiny uses the same I219-LM. The mitigation survived the swap because it lives
+on the transplanted boot disk.
+
+Verified 2026-08-24 on all five: unit `enabled` + `active`, `tso/gso/gro` all `off`,
+zero hang events on the current boot.
 
 ## History
 

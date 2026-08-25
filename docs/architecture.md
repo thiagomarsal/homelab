@@ -24,6 +24,39 @@ _Verified live against the cluster and `helm list -A` on 2026-08-18._
 - **DNS**: Cloudflare (external) + Pi-hole (internal)
 - **Router**: pfSense 192.168.1.1 (VM on pve03) — port forwards 80/443 → Traefik MetalLB IP
 
+### Proxmox host hardware (verified live 2026-08-24)
+
+| Host | IP | Chassis | CPU | RAM (max) | Storage | NIC(s) | Guests |
+|---|---|---|---|---|---|---|---|
+| pve01 | .10 | generic mini-PC | N95, 4C/4T | 12GB soldered (12GB) | 238GB SATA SSD | `nic0` r8169 | k3s-master-1 (110) |
+| pve02 | .11 | generic mini-PC | N150, 4C/4T | 16GB, 1 slot (32GB) | 238GB SATA SSD | `enp1s0` r8169 | k3s-master-2 (111), pihole (CT101) |
+| pve03 | .12 | **Lenovo ThinkCentre M900 Tiny** (10FM001GUS) | **i7-6700T, 4C/8T** | 16GB 2×8 DDR4-2133 (32GB) | 1TB Samsung 870 EVO (`ssd-storage`) + 238GB SK hynix BC711 NVMe (boot, `local-lvm`) + 466GB ST500LT012 HDD (`usb-backup`) | `eno1` I219-LM **e1000e** → vmbr0; `enp2s0` RTL8125 2.5GbE r8169 → vmbr1 | pfSense (106), k3s-master-3 (112), immich (CT100, stopped) |
+| pve04 | .13 | Kamrui AK1 Plus | N95, 4C/4T | 8GB, 1 slot (16GB) | 1TB Samsung 870 EVO + 238GB SATA SSD | `nic0` r8169 | k3s-worker-1 (115) |
+| pve05 | .14 | HP ProDesk 600 G4 DM | i5-8500T, 6C/6T | 16GB 2×8 (32GB) | 954GB Samsung NVMe + 1TB ST1000LM024 HDD (not in any `pvesm` pool) | `eno1` I219-LM **e1000e** | k3s-worker-2 (114) |
+| pve06 | .15 | HP ProDesk 600 G4 DM | i5-8500T, 6C/6T | 24GB (16+8, flex mode) (32GB) | 238GB Micron SSD | `nic0` I219-LM **e1000e** | k3s-worker-3 (116) |
+| pve07 | .16 | HP ProDesk 600 G4 DM (TAA) | i5-8500T, 6C/6T | 32GB 2×16 (32GB) | 238GB Micron SSD | `nic0` I219-LM **e1000e** | k3s-worker-4 (117), uptime-kuma (CT102), template 9007 |
+| pve08 | .17 | HP ProDesk 600 G4 DM (TAA) | i5-8500T, 6C/6T | 32GB 2×16 (32GB) | 238GB Micron SSD | `nic0` I219-LM **e1000e** | k3s-worker-5 (118), template 9008 |
+
+Fleet total 156GB RAM. Every slot is occupied — pve04 and pve01 are at their
+board ceilings, so the only way up on pve02/03/05/06 is swapping sticks out.
+
+**pve03 was re-hosted on 2026-08-24**: the HP EliteDesk 800 G2 DM (i5-6500T,
+4C/4T) was replaced by a ThinkCentre M900 Tiny. The disks and the two DIMMs
+moved across, so the PVE install, hostname, corosync identity and all guests
+carried over untouched — it is the same node with faster silicon (4C/8T instead
+of 4C/4T). The `eno1` MAC changed with the chassis, which is harmless here since
+the host is statically addressed.
+
+The 466GB ST500LT012 backing `/mnt/usb-backup` was left out of the first
+reassembly and reconnected the same day. Note that it is hot-plug-fragile:
+`/etc/fstab` mounts it by UUID with `nofail`, so a host that boots without the
+disk attached comes up clean but leaves `/mnt/usb-backup` an empty directory on
+the root disk, and `pvesm status` reports the storage `inactive`. Reattaching
+after boot does **not** auto-mount it — run `mount /mnt/usb-backup`.
+
+The M900 Tiny still uses an Intel I219-LM, so pve03 remains exposed to the
+`e1000e` errata — see `runbooks/pve-nic-hang.md`.
+
 ### Core component versions (helm/live, 2026-08-18)
 
 | Component | Version | Notes |

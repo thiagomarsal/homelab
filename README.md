@@ -1,6 +1,6 @@
 # homelab
 
-Infrastructure-as-code for a 4-node Proxmox homelab running k3s HA with Rancher.
+Infrastructure-as-code for an 8-node Proxmox homelab running k3s HA.
 
 ## Cluster Overview
 
@@ -9,13 +9,17 @@ Infrastructure-as-code for a 4-node Proxmox homelab running k3s HA with Rancher.
 | k3s-master-1 | 192.168.1.50 | k3s server (bootstrap) |
 | k3s-master-2 | 192.168.1.51 | k3s server |
 | k3s-master-3 | 192.168.1.52 | k3s server |
-| k3s-worker-1 | 192.168.1.53 | k3s agent (on-demand) |
+| k3s-worker-1 | 192.168.1.53 | k3s agent |
+| k3s-worker-2 | 192.168.1.54 | k3s agent |
+| k3s-worker-3 | 192.168.1.55 | k3s agent |
+| k3s-worker-4 | 192.168.1.56 | k3s agent |
+| k3s-worker-5 | 192.168.1.57 | k3s agent |
 
-- **Proxmox**: 4-node cluster (pve01–pve04), ZFS raidz2 on pve04
+- **Proxmox**: 8-node cluster (pve01–pve08), all always-on, local storage only — no cluster-wide ZFS pool (see `docs/architecture.md` for per-host hardware)
 - **k3s**: v1.34.5+k3s1 — 3-server HA via kube-vip (VIP: 192.168.1.60)
 - **Load balancer**: MetalLB (192.168.1.61–199)
 - **Domain**: *.tmf-solutions.com
-- **Management**: Rancher at rancher.tmf-solutions.com
+- **Management**: `kubectl` (context `homelab`) — Rancher is pinned in `group_vars/all.yml` and has manifests under `kubernetes/rancher/`, but is **not deployed**: no `cattle-system` namespace exists and rancher.tmf-solutions.com returns 404
 
 ## Repository Layout
 
