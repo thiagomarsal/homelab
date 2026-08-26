@@ -75,3 +75,47 @@ Pick the next free VMID (masters 110-112, workers 113+) and the next free static
 2. Add to `ansible/inventory/hosts.yml` under `servers:`
 3. Run: `ansible-playbook playbooks/k3s/site.yml --limit <new-node-hostname>`
 4. Verify etcd membership: `kubectl get nodes -o wide`
+
+`--limit` is load-bearing, not tidiness: site.yml's last play deploys cluster
+services from `k3s-master-1`, and the limit is what excludes it. Running site.yml
+unscoped re-runs those heavy installs and can destabilise the etcd masters.
+
+## Replace a PVE host in place (reusing its name and IP)
+
+Reusing the name and IP means old and new **cannot coexist** — the old host must
+leave the cluster before the new one joins, so a master-hosting node costs you an
+etcd member for the duration. Done for pve02 on 2026-08-25; ~25 minutes at two
+members.
+
+Prepare the new host as far as possible first, on a temporary IP, so the exposed
+window covers only the swap itself:
+
+1. Install PVE on a temp IP. **Patch it to the fleet's exact version before
+   joining** — a fresh ISO is usually a point release behind, and a fresh install
+   also comes with the enterprise repos enabled (they 403 without a subscription).
+   Mirror a working node's `/etc/apt/sources.list.d/`: `Enabled: false` on
+   `pve-enterprise` and `ceph`, plus a `proxmox.sources` with `pve-no-subscription`.
+2. Evacuate the old host: `pct migrate` / `qm migrate` anything that must survive.
+3. Drain the master, `systemctl stop k3s`, `kubectl delete node <name>`. Confirm
+   the etcd member actually left — `journalctl -u k3s | grep "Removing etcd member"`
+   on a surviving master. A stale member blocks the rebuild.
+4. `qm destroy <vmid> --purge`, power the host off, then `pvecm delnode <name>`
+   from a surviving node. `Could not kill node (CS_ERR_NOT_EXIST)` is expected when
+   the host is already off.
+5. **`rm -rf /etc/pve/nodes/<name>`** — `delnode` leaves this directory and it
+   blocks re-adding under the same name. Check it for guest configs first.
+6. Set the new host's final IP (`/etc/network/interfaces` **and** `/etc/hosts`),
+   reboot, confirm the old host is off the network.
+7. `pvecm add <existing-node-ip>` — it prompts for a password. For a scripted join,
+   append the new node's `/root/.ssh/id_rsa.pub` to the cluster's shared
+   `/etc/pve/priv/authorized_keys` and use `--use_ssh`.
+8. `ansible-playbook playbooks/infra/nic-offload-fix.yml --limit <host>` if it has
+   an Intel NIC, then `timezone.yml`, `promtail-pve.yml`, `n8n-pve-access.yml`.
+9. Rebuild the guest and rejoin (see the sections above). Templates are node-local,
+   so a replacement host needs its own (`TEMPLATE_VMID` = 9000 + host number).
+
+Reusing the name and IP means **no inventory changes at all** — `hosts.yml`,
+pve-exporter scrape targets and their labels all keep working.
+
+Your local `~/.ssh/known_hosts` will still hold the old machine's host key for that
+IP. Clear it (`ssh-keygen -R <ip>`) or every later connection warns.

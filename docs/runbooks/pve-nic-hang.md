@@ -77,9 +77,15 @@ Runs `serial: 1` so a NIC reconfigure can never disturb quorum on two nodes at o
 
 ## Affected hardware
 
-Any host with an **Intel I219-LM** on the `e1000e` driver — **pve03, pve05, pve06,
-pve07, pve08**. All shipped with offloads on. pve01, pve02 and pve04 use Realtek
-`r8169` NICs and are not affected.
+Any host with an **Intel I219-LM** on the `e1000e` driver — **pve02, pve03, pve05,
+pve06, pve07, pve08**. All shipped with offloads on. Only **pve01 and pve04** use
+Realtek `r8169` NICs and are unaffected.
+
+That ratio got worse on 2026-08-25: the replacement pve02 (ThinkCentre M80q) is
+I219-LM, where the Kamrui E2 it replaced was Realtek. Six of eight hosts now share
+this single failure mode. Since pve01 is itself a retirement candidate, **pve04 is
+effectively the last immune host** — which is the argument for putting LAN DNS
+there rather than on `e1000e` hardware.
 
 pve03 is the one that matters most: it runs pfSense, so a hang there takes the whole
 LAN's routing down, not just one k3s node. Replacing its chassis on 2026-08-24 (HP
@@ -87,8 +93,10 @@ EliteDesk 800 G2 DM → Lenovo ThinkCentre M900 Tiny) did **not** remove the exp
 the M900 Tiny uses the same I219-LM. The mitigation survived the swap because it lives
 on the transplanted boot disk.
 
-Verified 2026-08-24 on all five: unit `enabled` + `active`, `tso/gso/gro` all `off`,
-zero hang events on the current boot.
+Verified 2026-08-24 on the then-five, and again on the new pve02 when it joined
+2026-08-25: unit `enabled` + `active`, `tso/gso/gro` all `off`, zero hang events on
+the current boot. **Run this playbook against any newly added host before it takes
+production load** — the mitigation is not part of `site.yml`.
 
 ## History
 

@@ -69,8 +69,8 @@ configured independently on pve01, pve02, and pve03 at
 > 1. **All five `vzdump` jobs are `enabled 0`** in `/etc/pve/jobs.cfg`. Nothing
 >    below has run on a schedule for some time. The newest artifact on disk is a
 >    41GB `vzdump-qemu-112` from 2026-08-02.
-> 2. **The pihole job still targets pve01**, but pihole (CT101) was migrated to
->    pve02 on 2026-08-21.
+> 2. **The pihole job still targets pve01**, but pihole (CT101) has moved twice
+>    since — to pve02 on 2026-08-21, then to **pve03** on 2026-08-25.
 >
 > `usb-backup` is also declared `nodes pve03` in `storage.cfg`, so it shows as
 > `disabled` on pve01/pve02 — the jobs listed for those hosts could not write

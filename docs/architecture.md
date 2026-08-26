@@ -29,16 +29,19 @@ _Verified live against the cluster and `helm list -A` on 2026-08-18._
 | Host | IP | Chassis | CPU | RAM (max) | Storage | NIC(s) | Guests |
 |---|---|---|---|---|---|---|---|
 | pve01 | .10 | generic mini-PC | N95, 4C/4T | 12GB soldered (12GB) | 238GB SATA SSD | `nic0` r8169 | k3s-master-1 (110) |
-| pve02 | .11 | generic mini-PC | N150, 4C/4T | 16GB, 1 slot (32GB) | 238GB SATA SSD | `enp1s0` r8169 | k3s-master-2 (111), pihole (CT101) |
-| pve03 | .12 | **Lenovo ThinkCentre M900 Tiny** (10FM001GUS) | **i7-6700T, 4C/8T** | 16GB 2×8 DDR4-2133 (32GB) | 1TB Samsung 870 EVO (`ssd-storage`) + 238GB SK hynix BC711 NVMe (boot, `local-lvm`) + 466GB ST500LT012 HDD (`usb-backup`) | `eno1` I219-LM **e1000e** → vmbr0; `enp2s0` RTL8125 2.5GbE r8169 → vmbr1 | pfSense (106), k3s-master-3 (112), immich (CT100, stopped) |
+| pve02 | .11 | **Lenovo ThinkCentre M80q** (11DQS0P500) | **i7-10700T, 8C/16T** | 32GB 2×16 DDR4-3200 (**64GB**) | 954GB Samsung NVMe (`local-lvm` 855GB) | `nic0` I219-LM **e1000e** | k3s-master-2 (111), template 9002 |
+| pve03 | .12 | **Lenovo ThinkCentre M900 Tiny** (10FM001GUS) | **i7-6700T, 4C/8T** | 16GB 2×8 DDR4-2133 (32GB) | 1TB Samsung 870 EVO (`ssd-storage`) + 238GB SK hynix BC711 NVMe (boot, `local-lvm`) + 466GB ST500LT012 HDD (`usb-backup`) | `eno1` I219-LM **e1000e** → vmbr0; `enp2s0` RTL8125 2.5GbE r8169 → vmbr1 | pfSense (106), k3s-master-3 (112), **pihole (CT101)**, **uptime-kuma (CT102)**, immich (CT100, stopped) |
 | pve04 | .13 | Kamrui AK1 Plus | N95, 4C/4T | 8GB, 1 slot (16GB) | 1TB Samsung 870 EVO + 238GB SATA SSD | `nic0` r8169 | k3s-worker-1 (115) |
 | pve05 | .14 | HP ProDesk 600 G4 DM | i5-8500T, 6C/6T | 16GB 2×8 (32GB) | 954GB Samsung NVMe + 1TB ST1000LM024 HDD (not in any `pvesm` pool) | `eno1` I219-LM **e1000e** | k3s-worker-2 (114) |
 | pve06 | .15 | HP ProDesk 600 G4 DM | i5-8500T, 6C/6T | 24GB (16+8, flex mode) (32GB) | 238GB Micron SSD | `nic0` I219-LM **e1000e** | k3s-worker-3 (116) |
-| pve07 | .16 | HP ProDesk 600 G4 DM (TAA) | i5-8500T, 6C/6T | 32GB 2×16 (32GB) | 238GB Micron SSD | `nic0` I219-LM **e1000e** | k3s-worker-4 (117), uptime-kuma (CT102), template 9007 |
+| pve07 | .16 | HP ProDesk 600 G4 DM (TAA) | i5-8500T, 6C/6T | 32GB 2×16 (32GB) | 238GB Micron SSD | `nic0` I219-LM **e1000e** | k3s-worker-4 (117), template 9007 |
 | pve08 | .17 | HP ProDesk 600 G4 DM (TAA) | i5-8500T, 6C/6T | 32GB 2×16 (32GB) | 238GB Micron SSD | `nic0` I219-LM **e1000e** | k3s-worker-5 (118), template 9008 |
 
-Fleet total 156GB RAM. Every slot is occupied — pve04 and pve01 are at their
-board ceilings, so the only way up on pve02/03/05/06 is swapping sticks out.
+Fleet total 172GB RAM. Every slot is occupied, and every board except pve02's
+caps at 32GB — pve04 and pve01 are already at their ceilings, and pve03/05/06
+can only grow by swapping sticks out. **pve02 is the sole host that can exceed
+32GB** (2 slots, 64GB max), which makes it the natural home for anything that
+outgrows the rest of the fleet.
 
 **pve03 was re-hosted on 2026-08-24**: the HP EliteDesk 800 G2 DM (i5-6500T,
 4C/4T) was replaced by a ThinkCentre M900 Tiny. The disks and the two DIMMs
@@ -56,6 +59,52 @@ after boot does **not** auto-mount it — run `mount /mnt/usb-backup`.
 
 The M900 Tiny still uses an Intel I219-LM, so pve03 remains exposed to the
 `e1000e` errata — see `runbooks/pve-nic-hang.md`.
+
+**pve02 was replaced on 2026-08-25 (complete).** The Kamrui E2 (N150, 4C/4T,
+16GB, 238GB M.2 SATA) went to a family member; a Lenovo ThinkCentre M80q
+(i7-10700T 8C/16T, 32GB, 954GB NVMe) took its place, reusing the `pve02` name
+and `192.168.1.11` so no inventory edits were needed. It is now the strongest
+host in the fleet.
+
+The name and IP had to be reused, so old and new could not coexist — the old
+host was removed from the cluster *before* the new one joined, which took the
+cluster to two etcd members for about 25 minutes. Sequence that worked:
+
+1. `pct migrate` pihole (CT101) and uptime-kuma (CT102) off to pve03
+2. drain `k3s-master-2`, `systemctl stop k3s`, `kubectl delete node` — k3s
+   removes the etcd member through raft on node delete; confirm this in the
+   k3s journal (`Removing etcd member from cluster due to node delete`), because
+   a stale member blocks the rebuild later
+3. `qm destroy 111 --purge` (also strips the VMID from `jobs.cfg`), power off,
+   then `pvecm delnode pve02` from a surviving node
+4. **`rm -rf /etc/pve/nodes/pve02`** — `delnode` leaves this behind and it
+   blocks re-adding a node under the same name
+5. new host: patch to the fleet's PVE version *first*, then set the final IP,
+   then `pvecm add`
+6. `nic-offload-fix.yml`, provision VM 111 from a node-local template
+   (`TEMPLATE_VMID=9002`, `MEMORY=10240`), then
+   `site.yml --limit k3s-master-2`
+
+`pvecm add` prompts for a password interactively. To script it, put the new
+node's `/root/.ssh/id_rsa.pub` into the cluster's shared
+`/etc/pve/priv/authorized_keys` and use `pvecm add <ip> --use_ssh`.
+
+**pihole (CT101) and uptime-kuma (CT102) now live on pve03**, moved there to
+free pve02.
+
+> **Known concentration risk, accepted deliberately.** pve03 carries the router
+> (pfSense), LAN DNS (pihole), an etcd master, and the monitor that would report
+> the outage (uptime-kuma). A single pve03 failure takes routing, DNS and
+> alerting at once — and pve03 is on `e1000e` hardware, whose failure mode is a
+> host that stays up with a dead NIC. Pi-hole was previously on pve02 precisely
+> to keep DNS off Intel NICs, and **the replacement pve02 is also I219-LM**, so
+> that option did not come back. The remaining fix is to move pihole to
+> **pve04**, now the only Realtek-NIC host left in the fleet.
+
+pve03 is now the second-tightest host in the fleet on RAM: 2048 (pfSense) +
+10240 (master-3) + 512 + 512 (the two CTs) = **13.3GB allocated of 15.9GB**,
+leaving ~2.6GB for PVE itself against ~1.7GB typical usage. Do not add guests
+here without reducing something first.
 
 ### Core component versions (helm/live, 2026-08-18)
 
