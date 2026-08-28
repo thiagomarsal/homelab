@@ -13,7 +13,23 @@
 # At the defaults that is 512Mi + 300Mi = ~812Mi, which is ~13% of a 6GB worker
 # and ~7% of a 12GB worker. Override per-host or per-group in group_vars if a
 # node needs different headroom.
+#
+# Image garbage collection: kubelet only prunes unused images once nodefs passes
+# imageGCHighThresholdPercent, which defaults to 85. These nodes ran at 18-80%,
+# so GC had never fired even once and unused images simply accumulated — on
+# 2026-08-28 a manual `crictl rmi --prune` recovered 58.9GB across 8 nodes
+# (worker-1 alone dropped 30G -> 17G, image count 35 -> 13). Lowering the
+# trigger to 70/55 makes kubelet do this continuously instead, so no scheduled
+# prune job is needed.
+#
+# Age-based pruning (imageMaximumGCAge) would be a nicer fit but is deliberately
+# not used here: it exists in the kubeletconfig struct on v1.34.5 but has no
+# confirmed --kubelet-arg flag form, and an unrecognised kubelet flag stops the
+# node from starting. Not worth risking on 8 nodes for a marginal gain. Set it
+# via a real KubeletConfiguration file if it is ever wanted.
 kubelet-arg:
+  - "image-gc-high-threshold={{ k3s_image_gc_high | default('70') }}"
+  - "image-gc-low-threshold={{ k3s_image_gc_low | default('55') }}"
   - "kube-reserved=cpu={{ k3s_agent_kube_reserved_cpu | default('200m') }},memory={{ k3s_agent_kube_reserved_memory | default('256Mi') }},ephemeral-storage={{ k3s_agent_kube_reserved_storage | default('2Gi') }}"
   - "system-reserved=cpu={{ k3s_agent_system_reserved_cpu | default('100m') }},memory={{ k3s_agent_system_reserved_memory | default('256Mi') }},ephemeral-storage={{ k3s_agent_system_reserved_storage | default('2Gi') }}"
   - "eviction-hard=memory.available<{{ k3s_agent_eviction_hard_memory | default('300Mi') }},nodefs.available<{{ k3s_agent_eviction_hard_nodefs | default('5%') }}"

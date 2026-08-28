@@ -47,6 +47,13 @@
               apt-get update
               apt-get dist-upgrade -y
               apt-get autoremove -y
+              # Drop the .debs dist-upgrade just downloaded. Without this the
+              # cache is never emptied and grows by a monthly increment forever:
+              # on 2026-08-28 the fleet was holding 7.0GB across 8 hosts, with
+              # pve01 at 2.3GB on its 68GB root. Best-effort on purpose — `set -e`
+              # is active in this branch and a failed cache cleanup must never
+              # abort an otherwise-successful upgrade or skip the reboot below.
+              apt-get clean || logger -t n8n-apt-upgrade "apt-get clean failed (non-fatal)"
               # grep '^[0-9]' because the glob also matches proxmox-kernel-helper,
               # which stripped of its prefix sorts last and made the report claim
               # LATEST_INSTALLED_KERNEL=helper.

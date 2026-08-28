@@ -21,7 +21,7 @@ path if that database and its backups are ever lost.
 
 | Fact | Value |
 |---|---|
-| Proxmox host | pve01 |
+| Proxmox host | **pve03** (was pve01 → pve07 2026-08-21 → pve03 2026-08-25) |
 | CTID | 102 |
 | Hostname | uptime-kuma |
 | IP | 192.168.1.21/24 |
@@ -42,6 +42,20 @@ Provisioned by `ansible/playbooks/lxc/uptime-kuma.yml` (role:
 `ansible/roles/uptime-kuma`). Re-running the playbook is safe — every step is
 idempotent (container-exists check, Docker-binary-exists check, and a
 `docker inspect` guard before `docker run`).
+
+> **When CT102 moves hosts, the `kuma_host` inventory group must move with it.**
+> The playbook targets that group (`ansible/inventory/hosts.yml`), and the role
+> installs the nightly DB backup cron on whatever host it hits. The cron drives
+> the container through `pct exec`, so on the wrong host it fails every night.
+>
+> This is not hypothetical: the group used to be a templated var
+> (`hosts: "{{ kuma_lxc_host | default('pve01') }}"`), and because Ansible
+> evaluates `hosts:` *before* group_vars load, the var was always undefined and
+> the default silently pinned every run to pve01. The cron stayed there through
+> two migrations and failed nightly from 2026-08-21 to 2026-08-28 with
+> `sqlite3 .backup failed inside the container`. Fixed 2026-08-28 by switching to
+> a real inventory group; `pct migrate` now needs a one-line inventory edit plus
+> a re-run of this playbook.
 
 Container base image: Debian 12 (bookworm), template
 `local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst` — verified present on
@@ -166,33 +180,43 @@ Reload records with `systemctl restart pihole-FTL` inside CT 101.
 
 ## Backup
 
-- **What**: nightly cron job at `/etc/cron.daily/kuma-db-backup` inside the
-  LXC (installed by the `uptime-kuma` Ansible role), which takes a
-  `sqlite3 .backup` snapshot of Kuma's database, verifies it with
+- **What**: nightly cron job at `/etc/cron.daily/kuma-db-backup` on the
+  **Proxmox host** — not inside the LXC (installed by the `uptime-kuma` Ansible
+  role). It drives the container from outside via `pct exec` / `docker exec`:
+  takes a `sqlite3 .backup` snapshot of Kuma's database, verifies it with
   `PRAGMA integrity_check` *inside* the container, pulls it out with
   `pct pull`, and only then atomically renames it into place — so a failed
   or partial backup run never overwrites a previous good one.
-- **Where**: `/var/lib/vz/dump/kuma/kuma-YYYYMMDD.db` on **pve01** (the host,
-  not the container).
+- **Where**: `/var/lib/vz/dump/kuma/kuma-YYYYMMDD.db` on **pve03** (the host,
+  not the container). Because the cron lives on the host, it does **not** follow
+  a `pct migrate` — see the warning above.
 - **Retention**: 7 days (older dated files, and any orphaned
   `.kuma-*.db.tmp` files left by an interrupted pull, deleted by `mtime`).
-- This is the *only* backup of the 12 monitor definitions. There is no
-  second copy and nothing here is in git.
-- **Checking it actually ran**: this LXC has no MTA, so cron.daily failures
-  go nowhere by default. The script logs to journald under the
-  `kuma-db-backup` tag on every run — a `daemon.info` line on success, a
-  `daemon.err` line with a reason on failure. From pve01:
+  Note the retention `find` runs *after* the backup step and `fail()` exits
+  early, so a broken backup also stops pruning — which is the only reason the
+  2026-08 outage did not silently delete its own last-known-good files.
+- This is the *only* backup of the 13 monitor definitions. There is no
+  second copy and nothing here is in git. (A one-off rescue copy of the
+  2026-08-18→21 files also sits in `pve03:/root/kuma-backup-archive/`, outside
+  the retention path.)
+- **Checking it actually ran**: the host's cron.daily failures go nowhere by
+  default. The script logs to journald under the `kuma-db-backup` tag on every
+  run — a `daemon.info` line on success, a `daemon.err` line with a reason on
+  failure. The tag is on the **host's** journal, so do not wrap this in
+  `pct exec`:
   ```
-  ansible pve01 -m shell -a 'pct exec 102 -- journalctl -t kuma-db-backup --since "-8 days"'
+  ansible kuma_host -m shell -a 'journalctl -t kuma-db-backup --since "-8 days"'
   ```
   A missing success line for a given day means that day has no backup —
-  treat it the same as a failure even if nothing paged.
+  treat it the same as a failure even if nothing paged. Nothing in Prometheus
+  watches this yet; it is a manual check.
 
 ## Restore procedure
 
 1. Re-run the provisioning playbook to get a fresh LXC + Docker + Kuma
-   container back on pve01 (safe to run even if CTID 102 already exists —
-   every step is idempotent):
+   container back on the host in the `kuma_host` inventory group (currently
+   pve03; safe to run even if CTID 102 already exists — every step is
+   idempotent):
    ```
    cd ansible
    ansible-playbook playbooks/lxc/uptime-kuma.yml --ask-vault-pass

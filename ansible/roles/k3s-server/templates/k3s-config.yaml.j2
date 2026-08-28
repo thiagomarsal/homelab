@@ -1,6 +1,13 @@
 # Reserve resources for k3s/etcd/system — prevents app pods from starving control plane
 # Applied on all master nodes (combined master+worker setup)
+#
+# Image GC trigger lowered from the 85 default — see the long note in
+# roles/k3s-agent/templates/k3s-config.yaml.j2. Masters carry images too
+# (master-1 held 55 images / 21GB before the 2026-08-28 prune), so they need
+# this as much as the agents do.
 kubelet-arg:
+  - "image-gc-high-threshold={{ k3s_image_gc_high | default('70') }}"
+  - "image-gc-low-threshold={{ k3s_image_gc_low | default('55') }}"
   - "kube-reserved=cpu=500m,memory=512Mi,ephemeral-storage=2Gi"
   - "system-reserved=cpu=200m,memory=512Mi,ephemeral-storage=2Gi"
   - "eviction-hard=memory.available<300Mi,nodefs.available<5%"

@@ -79,6 +79,138 @@ provision time.
 **PVE version drift:** pve02 runs 9.2.11 (it shipped newer and was patched to
 join), the other seven run 9.2.10. Harmless, but the fleet is no longer uniform.
 
+#### 2026-08-28 disk cleanup
+
+Reclaimed ~76GB with no downtime: 7.0GB of apt caches across all 8 hosts, 10.1GB
+of guest journals, 58.9GB from `k3s crictl rmi --prune`, and 242MB of
+unreferenced LXC templates on pve01 (`pveam remove`).
+
+`SystemMaxUse=500M` is now pinned via
+`/etc/systemd/journald.conf.d/99-homelab-cap.conf` on all 8 hosts **and** all 8
+guests — it was unset everywhere, and three guests had grown ~3.9GB journals.
+This was applied by hand and is **not yet in Ansible**; the `common` role is the
+right home for it.
+
+PVE host journals were deliberately capped but **not** vacuumed — they hold the
+`e1000e` NIC-hang history that `runbooks/pve-nic-hang.md` depends on.
+
+**`ssd-storage` now serves pve03 *and* pve04.** It had `nodes pve03`, so pve04's
+identical 913GB thin pool reported `disabled` and Proxmox could not use the drive
+at all. `pvesm set ssd-storage --nodes pve03,pve04` unlocked **895GB** of
+capacity. One storage id works for both because each host has its own VG *and*
+thinpool literally named `ssd-storage`. Previous file saved at
+`pve03:/root/storage.cfg.bak-20260828`.
+
+**The 58.9GB from the image prune is trapped.** It freed space inside the guest
+filesystems, but **no guest disk has `discard=on`**, so nothing returned to the
+LVM-thin pools — thin allocation only ever grows. Every worker disk is plain
+`scsi0: local-lvm:vm-NNN-disk-0,size=100G`. Until discard is enabled and the
+guests are trimmed, pool fill overstates real usage by a wide margin: `vm-110`
+sits at 98.9% allocated against 37GB actually used, and `vm-112`/`vm-106` both
+report 100%. Enabling it needs a guest restart per node, so it is pending.
+
+**pve04's orphan is gone.** `ssd-storage:vm-104-disk-0` (100GB provisioned,
+~18.5GB real) was the decommissioned nextcloudpi LXC, inactive since creation
+with zero config references cluster-wide. Freed 2026-08-28, so pve04's pool is
+now at **0.00% of 913GB**.
+
+### Longhorn storage health (2026-08-28)
+
+Available capacity went from **305.9GB to 535.4GB** in one pass. Two fixes:
+
+**k3s-master-2 was contributing nothing.** Its Longhorn disk reported
+`max=0.0G` with `DiskFilesystemChanged` — the node CR still recorded diskUUID
+`674a3d51…` from the *old* master-2 VM, which `qm destroy 111 --purge` destroyed
+during the 2026-08-25 host replacement, while the rebuilt filesystem reports
+`87cb9cce…`. Longhorn correctly refuses a disk whose UUID it does not recognise.
+Fixed by removing the disk from `node.spec.disks` and re-adding it so the record
+matches reality; `/var/lib/longhorn/replicas` was empty, so nothing was at risk.
+The webhook rejects removal until `allowScheduling: false` is set first. Now
+Ready + Schedulable at 98.2G. **Any rebuild-in-place of a node needs this
+check** — a silently unschedulable node is easy to miss.
+
+**The Prometheus volume was 1.88× its own spec** — 30.1GiB actual against a
+16GiB request, holding only 5.6GiB of live data. The 15.6GiB base snapshot
+sitting under it was already `markRemoved: True` and the engine's purge had
+completed on all three replicas: a snapshot whose only child is `volume-head`
+**cannot** be coalesced away while the volume is attached, so deleting it was
+never the fix. The actual mechanism is a filesystem trim — Prometheus rewrites
+TSDB blocks constantly and Longhorn never reclaimed the freed ones. A trim took
+it to **11.6GiB**, ~18.5GiB per replica × 3 ≈ 55GB of raw disk.
+
+`fstrim` inside the Prometheus container returns `FITRIM: Operation not
+permitted` (unprivileged securityContext). Use the Longhorn API instead, from
+any manager pod:
+
+```
+curl -s -X POST -H "Content-Type: application/json" -d '{}' \
+  "http://longhorn-backend:9500/v1/volumes/<volume>?action=trimFilesystem"
+```
+
+Trim stops at the snapshot chain unless the volume sets
+`unmapMarkSnapChainRemoved: enabled`, because the global
+`remove-snapshots-during-filesystem-trim` setting is `false`. That was patched
+on the Prometheus volume only.
+
+To stop the drift recurring, `kubernetes/base/storage/longhorn-recurringjob-trim.yml`
+adds a weekly `filesystem-trim` RecurringJob against the `default` group, which
+every volume here is already labelled into. Note the two pre-existing backup
+RecurringJobs (`hoa-nightly-backup`, `porquinho-nightly`) are **not** in the repo
+— they exist only in the cluster.
+
+### Keeping the cleanup from recurring (2026-08-28)
+
+Most of what the cleanup recovered is now self-maintaining, so there is
+deliberately **no scheduled cleanup job**. Two root causes were fixed instead:
+
+**`apt-get clean` added to the n8n forced-command wrapper.** The `upgrade` branch
+of `/usr/local/sbin/n8n-apt-upgrade.sh` ran `update` → `dist-upgrade` →
+`autoremove` and never emptied the package cache, so every monthly run left its
+downloads behind — that is the whole 7.0GB. It is intentionally best-effort
+(`|| logger`), because `set -e` is active in that branch and a failed cache
+cleanup must never abort an upgrade or skip the reboot. Verified after deploy:
+`bash -n` clean and identical md5 on all 8 hosts, and `healthcheck` returns
+`HEALTHY` on all 8 through the restricted key in both the bare form and n8n's
+actual `cd / ; healthcheck` form.
+
+**kubelet image GC lowered from the 85 default to 70/55.** This is why 58.9GB of
+unused images accumulated: nodes ran at 18–80% nodefs, never crossed the default
+threshold, and image GC had therefore *never fired once*. With 70/55 kubelet
+prunes continuously. Set in both `k3s-config.yaml.j2` templates.
+
+Age-based pruning (`imageMaximumGCAge`) is deliberately **not** used. The field
+exists in the kubeletconfig struct on v1.34.5, but there is no confirmed
+`--kubelet-arg` flag form, and an unrecognised kubelet flag prevents a node from
+starting — not a risk worth taking across 8 nodes for a marginal gain.
+
+Rollout was staged on purpose: the config file is deployed to all 8 nodes, but
+only **k3s-worker-1** was restarted to validate the flags (drain → restart →
+`configz` confirms 70/55 → uncordon). The other seven keep the file dormant and
+pick it up at the **1 September** reboot, so nothing was disrupted twice. The one
+`Image garbage collection failed once … invalid capacity 0 on image filesystem`
+line at kubelet startup is the normal cAdvisor warm-up — it occurred exactly once
+at the restart instant and never repeated.
+
+The same 1 September reboot cycles every guest, which is what activates the
+pending `discard=on`. The guests' `fstrim.timer` is already enabled weekly, so
+the thin pools reclaim themselves within 7 days of that reboot with no manual
+step. Note this also explains why the pools grew unchecked despite fstrim
+running all along: the guests were trimming, and QEMU was silently discarding the
+requests because `discard` was unset.
+
+Still not covered by any automation: the monthly report covers **7 of 8 hosts**
+(pve08 runs n8n, so upgrading it inside the loop kills the execution before the
+email sends), and nothing watches the kuma backup freshness. A post-upgrade
+verification workflow scheduled ~1h later would close both.
+
+Every other volume is comfortably under its spec, so Prometheus was the only
+pathological one. Three ghost PVCs (kafka, minio, redis) that had been
+`Terminating` since 2026-06-07 are also cleared — their namespaces were already
+deleted, which is *why* they were stuck: reads succeed against a missing
+namespace but every write is rejected, so the finalizer could never be removed.
+Recreating each namespace let the controller finish the GC immediately; then the
+empty namespaces were deleted again.
+
 **pve03 was re-hosted on 2026-08-24**: the HP EliteDesk 800 G2 DM (i5-6500T,
 4C/4T) was replaced by a ThinkCentre M900 Tiny. The disks and the two DIMMs
 moved across, so the PVE install, hostname, corosync identity and all guests

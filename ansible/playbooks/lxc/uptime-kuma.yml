@@ -2,7 +2,12 @@
 # Off-cluster watcher for the fleet. Deliberately NOT in the k3s cluster: every
 # in-cluster monitor dies with the thing it is supposed to report on.
 - name: Provision the Uptime Kuma LXC
-  hosts: "{{ kuma_lxc_host | default('pve01') }}"
+  # Targets an inventory group, not a templated var. `hosts:` is evaluated
+  # before group_vars load, so `{{ kuma_lxc_host }}` here was always undefined
+  # and the old `| default('pve01')` silently pinned every run to pve01 — which
+  # is how the nightly backup cron this role installs got stranded there.
+  # The group definition in inventory/hosts.yml is the single source of truth.
+  hosts: kuma_host
   gather_facts: false
   roles:
     - uptime-kuma

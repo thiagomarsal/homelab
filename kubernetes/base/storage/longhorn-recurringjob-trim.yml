@@ -1,0 +1,40 @@
+---
+# Weekly filesystem trim for every Longhorn volume.
+#
+# Why: Longhorn allocates blocks as a guest filesystem writes them and does not
+# hand them back when the filesystem frees them again. Without a trim, a volume
+# with heavy churn grows monotonically and can pass its own requested size. On
+# 2026-08-28 the Prometheus volume was 30.1GiB actual against a 16GiB spec while
+# holding only 5.6GiB of live data — ~18.5GiB of stale blocks per replica, ×3
+# replicas ≈ 55GiB of wasted disk. A manual trim took it to 11.6GiB. Prometheus
+# rewrites TSDB blocks constantly, so it will drift back without this job.
+#
+# `groups: [default]` is deliberate: every volume in this cluster already carries
+# the `recurring-job-group.longhorn.io/default: enabled` label, so this covers all
+# of them and any future volume, with no per-PVC wiring.
+#
+# Safe by construction — a trim only discards blocks the filesystem has already
+# released. It does not touch live data. Scheduled after the 03:00 backup jobs so
+# the two never contend.
+#
+# Deep reclaim needs one extra thing: trim stops at the snapshot chain unless the
+# volume sets `unmapMarkSnapChainRemoved: enabled`, because the global
+# `remove-snapshots-during-filesystem-trim` setting is `false`. The Prometheus
+# volume was patched individually on 2026-08-28. Flip the global setting if this
+# becomes a pattern across volumes.
+apiVersion: longhorn.io/v1beta2
+kind: RecurringJob
+metadata:
+  name: weekly-filesystem-trim
+  namespace: longhorn-system
+spec:
+  cron: "0 4 * * 0"
+  task: filesystem-trim
+  groups:
+    - default
+  # Trim keeps nothing, so retain has no meaning here; 0 is the documented value
+  # for non-snapshot tasks.
+  retain: 0
+  # One volume at a time. Trim is I/O-heavy on spinning and consumer SSDs, and
+  # this fleet shares single disks between the hypervisor and its guests.
+  concurrency: 1

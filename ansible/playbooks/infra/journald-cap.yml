@@ -1,0 +1,41 @@
+---
+# Cap journald on every machine in the fleet — PVE hosts and k3s guests alike.
+#
+# Why this exists: `SystemMaxUse` was unset everywhere, so journald fell back to
+# "10% of the filesystem". On the 100GB k3s guests that is a ~10GB allowance, and
+# on 2026-08-28 three of them (k3s-master-1, k3s-master-3, k3s-worker-2) had each
+# grown journals of ~3.9GB. 500M is far more history than this fleet ever reads
+# and it bounds the growth.
+#
+# Deliberately does NOT vacuum. Applying the cap lets journald retire old data on
+# its own schedule; an aggressive `--vacuum-size` here would discard the PVE
+# hosts' e1000e NIC-hang history, which docs/runbooks/pve-nic-hang.md depends on.
+# Vacuum by hand if a specific host is tight, and think before doing it on a PVE
+# host that has hung before.
+- name: Bound journald disk usage fleet-wide
+  hosts: all
+  tasks:
+    - name: Pin SystemMaxUse via a drop-in
+      copy:
+        dest: /etc/systemd/journald.conf.d/99-homelab-cap.conf
+        mode: '0644'
+        content: |
+          # Managed by ansible/playbooks/infra/journald-cap.yml — do not edit by hand.
+          [Journal]
+          SystemMaxUse={{ journald_max_use }}
+      register: journald_cap
+
+    - name: Restart journald so the cap takes effect
+      systemd:
+        name: systemd-journald
+        state: restarted
+      when: journald_cap is changed
+
+    - name: Report current journal usage
+      command: journalctl --disk-usage
+      register: journald_usage
+      changed_when: false
+
+    - name: Show it
+      debug:
+        msg: "{{ inventory_hostname }}: {{ journald_usage.stdout }}"
