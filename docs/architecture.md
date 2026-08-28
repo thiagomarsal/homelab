@@ -24,16 +24,16 @@ _Verified live against the cluster and `helm list -A` on 2026-08-18._
 - **DNS**: Cloudflare (external) + Pi-hole (internal)
 - **Router**: pfSense 192.168.1.1 (VM on pve03) — port forwards 80/443 → Traefik MetalLB IP
 
-### Proxmox host hardware (verified live 2026-08-24)
+### Proxmox host hardware (verified live 2026-08-28)
 
 | Host | IP | Chassis | CPU | RAM (max) | Storage | NIC(s) | Guests |
 |---|---|---|---|---|---|---|---|
-| pve01 | .10 | generic mini-PC | N95, 4C/4T | 12GB soldered (12GB) | 238GB SATA SSD | `nic0` r8169 | k3s-master-1 (110) |
+| pve01 | .10 | generic mini-PC | N95, 4C/4T | 12GB soldered (12GB) | 238GB SATA SSD (G537N1) | `nic0` r8169 | k3s-master-1 (110) |
 | pve02 | .11 | **Lenovo ThinkCentre M80q** (11DQS0P500) | **i7-10700T, 8C/16T** | 32GB 2×16 DDR4-3200 (**64GB**) | 954GB Samsung NVMe (`local-lvm` 855GB) | `nic0` I219-LM **e1000e** | k3s-master-2 (111), template 9002 |
 | pve03 | .12 | **Lenovo ThinkCentre M900 Tiny** (10FM001GUS) | **i7-6700T, 4C/8T** | 16GB 2×8 DDR4-2133 (32GB) | 1TB Samsung 870 EVO (`ssd-storage`) + 238GB SK hynix BC711 NVMe (boot, `local-lvm`) + 466GB ST500LT012 HDD (`usb-backup`) | `eno1` I219-LM **e1000e** → vmbr0; `enp2s0` RTL8125 2.5GbE r8169 → vmbr1 | pfSense (106), k3s-master-3 (112), **pihole (CT101)**, **uptime-kuma (CT102)**, immich (CT100, stopped) |
 | pve04 | .13 | Kamrui AK1 Plus | N95, 4C/4T | 8GB, 1 slot (16GB) | 1TB Samsung 870 EVO + 238GB SATA SSD | `nic0` r8169 | k3s-worker-1 (115) |
-| pve05 | .14 | HP ProDesk 600 G4 DM | i5-8500T, 6C/6T | 16GB 2×8 (32GB) | 954GB Samsung NVMe + 1TB ST1000LM024 HDD (not in any `pvesm` pool) | `eno1` I219-LM **e1000e** | k3s-worker-2 (114) |
-| pve06 | .15 | HP ProDesk 600 G4 DM | i5-8500T, 6C/6T | 24GB (16+8, flex mode) (32GB) | 238GB Micron SSD | `nic0` I219-LM **e1000e** | k3s-worker-3 (116) |
+| pve05 | .14 | HP ProDesk 600 G4 DM (TAA) | i5-8500T, 6C/6T | 16GB 2×8 (32GB) | 954GB Samsung NVMe + 1TB ST1000LM024 HDD (not in any `pvesm` pool) | `eno1` I219-LM **e1000e** | k3s-worker-2 (114) |
+| pve06 | .15 | HP ProDesk 600 G4 DM (TAA) | i5-8500T, 6C/6T | 24GB (16+8, flex mode) (32GB) | 238GB Micron SSD | `nic0` I219-LM **e1000e** | k3s-worker-3 (116) |
 | pve07 | .16 | HP ProDesk 600 G4 DM (TAA) | i5-8500T, 6C/6T | 32GB 2×16 (32GB) | 238GB Micron SSD | `nic0` I219-LM **e1000e** | k3s-worker-4 (117), template 9007 |
 | pve08 | .17 | HP ProDesk 600 G4 DM (TAA) | i5-8500T, 6C/6T | 32GB 2×16 (32GB) | 238GB Micron SSD | `nic0` I219-LM **e1000e** | k3s-worker-5 (118), template 9008 |
 
@@ -42,6 +42,42 @@ caps at 32GB — pve04 and pve01 are already at their ceilings, and pve03/05/06
 can only grow by swapping sticks out. **pve02 is the sole host that can exceed
 32GB** (2 slots, 64GB max), which makes it the natural home for anything that
 outgrows the rest of the fleet.
+
+All four ProDesks report the TAA product string, so pve05–pve08 are one
+identical quad of chassis; only their RAM configs differ. The i5-8500T caps at
+2666 MT/s, so the 3200-rated sticks in pve06/07/08 all run at 2667.
+
+#### Guest allocation and storage fill (live 2026-08-28)
+
+| Host | Host RAM | Allocated to guests | `local-lvm` fill | Other pools |
+|---|---|---|---|---|
+| pve01 | 11.7GB | 9.2GB (VM110) | **70%** of 141GB | — |
+| pve02 | 31.8GB | 10GB (VM111) | 1.5% of 816GB | — |
+| pve03 | 15.9GB | **13.3GB** (106+112+CT101+CT102) | 3.8% of 141GB | `ssd-storage` 55% of 913GB, `usb-backup` 9% of 457GB |
+| pve04 | 7.7GB | 6GB (VM115) | 52% of 141GB | — |
+| pve05 | 15.8GB | 12GB (VM114) | 11% of 816GB | 1TB HDD unpooled |
+| pve06 | 23.8GB | 12GB (VM116) | 41% of 141GB | — |
+| pve07 | 31.9GB | 12GB (VM117) | 29% of 141GB | — |
+| pve08 | 31.9GB | 12GB (VM118) | 55% of 141GB | — |
+
+Every guest runs `balloon: 0`, so host-level `free` overstates pressure — judge
+by allocation-vs-host-RAM and by `kubectl top nodes`, not by `free` on the
+hypervisor. All non-template guests are `onboot: 1` except immich (CT100, which
+is stopped deliberately). Every worker VM is 12288MB / 4 cores, which is why
+pve06–pve08 have 11–20GB sitting idle: the 32GB upgrades are unused until the VM
+allocations are raised.
+
+SMART is `PASSED` on all 13 drives. The oldest are pve04's 870 EVO (11.2k
+power-on hours), pve03's ST500LT012 (10.8k) and pve05's Samsung NVMe (10.6k) —
+nothing near end of life, but those three are the first to watch.
+
+**Template RAM is inconsistent:** templates 9007/9008 were reduced to 4096MB, but
+**9002 on pve02 is still 12288MB**. Any VM cloned from 9002 inherits 12GB, which
+is what originally caused the pve04 overcommit. Reduce it or pass `MEMORY=` at
+provision time.
+
+**PVE version drift:** pve02 runs 9.2.11 (it shipped newer and was patched to
+join), the other seven run 9.2.10. Harmless, but the fleet is no longer uniform.
 
 **pve03 was re-hosted on 2026-08-24**: the HP EliteDesk 800 G2 DM (i5-6500T,
 4C/4T) was replaced by a ThinkCentre M900 Tiny. The disks and the two DIMMs
