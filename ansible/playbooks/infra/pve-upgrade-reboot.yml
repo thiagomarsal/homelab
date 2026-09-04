@@ -56,6 +56,36 @@
       delay: 10
       changed_when: false
 
+    # Quorum and "guests running" are both true even when a physical NIC failed to
+    # come back: on 2026-09-01 pve03 rebooted quorate with the pfSense VM running
+    # and its WAN card absent from the PCI bus, so this play reported success while
+    # the whole site was offline. A bridge with a missing port is exactly what that
+    # looks like from here, so check for it explicitly.
+    - name: Verify every configured bridge port exists and is enslaved
+      shell: |
+        set -o pipefail
+        awk '
+          /^[[:space:]]*iface[[:space:]]+/ { cur=$2 }
+          /^[[:space:]]*bridge[-_]ports[[:space:]]+/ {
+            for (i=2;i<=NF;i++) if ($i != "none") print cur, $i
+          }' /etc/network/interfaces | while read -r br port; do
+          if [ ! -e "/sys/class/net/$port" ]; then
+            echo "BROKEN $br: port $port does not exist (PCI device missing?)"
+          elif [ ! -e "/sys/class/net/$br/brif/$port" ]; then
+            echo "BROKEN $br: port $port exists but is not enslaved"
+          fi
+        done
+      args:
+        executable: /bin/bash
+      register: bridge_ports
+      changed_when: false
+      # Retried because a slow-probing NIC may still be settling right after boot;
+      # pcie-nic-recovery.service also gets its chance during this window.
+      until: bridge_ports.stdout | trim | length == 0
+      retries: 12
+      delay: 10
+      failed_when: bridge_ports.stdout | trim | length > 0
+
     # Guests have onboot=1 but Proxmox will not autostart them until the node is
     # quorate, so this has to come after the quorum gate above.
     - name: Wait for all previously-running guests to come back

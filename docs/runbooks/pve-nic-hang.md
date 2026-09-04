@@ -1,5 +1,9 @@
 # Runbook: PVE host alive but off the network (e1000e NIC hang)
 
+> Not the same as a NIC that is **missing** after a reboot. If the interface does
+> not exist at all and `ifup` says `bridge port <iface> does not exist`, that is a
+> PCIe link-training failure — see `pcie-nic-link-training.md`.
+
 ## Symptom
 
 A PVE host vanishes from the network but is clearly still running:

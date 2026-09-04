@@ -1,0 +1,230 @@
+---
+# Recover a PCIe NIC whose link fails to train after a warm reboot.
+#
+# The failure this exists for: on 2026-09-01 the monthly patch rebooted pve03 at
+# 02:39 and the pfSense WAN never came back. enp2s0 — a Realtek RTL8125B 2.5GbE
+# card in the M.2 slot, bridged into vmbr1 as pfSense's WAN — was absent from the
+# PCI bus entirely across three consecutive warm reboots:
+#
+#   pci 0000:00:1c.0: removing 2.5GT/s downstream link speed restriction
+#   pci 0000:00:1c.0: retraining failed
+#   networking[919]: error: vmbr1: bridge port enp2s0 does not exist
+#
+# The root port itself enumerated fine every time; only the downstream link to
+# the card failed to train, leaving bus 02 empty. A warm reset keeps 3.3V on the
+# M.2 slot and the platform never asserts a fundamental reset to the card, so the
+# controller stays in whatever state it was left in and does not answer link
+# training. Cutting power is what fixes it: physically reseating the card
+# recovered it instantly, and every cold boot since has been clean.
+#
+# Note what this is NOT, both ruled out by evidence:
+#   - Not ASPM. The kernel logs "ACPI FADT declares the system doesn't support
+#     PCIe ASPM, so disable it", so ASPM is already off globally and the r8169
+#     "can't disable ASPM" line is cosmetic. pcie_aspm=off would be a no-op.
+#   - Not Wake-on-LAN holding the card in an aux-powered state. enp2s0 reports
+#     "Wake-on: d" — already disabled.
+#
+# Why this is a best-effort recovery and not a guaranteed fix: the slot has no
+# software power control. The root port reports PwrCtrl-, HotPlug-, and its ACPI
+# node has no power resources (power_resources_D0/D3hot are both empty), so
+# nothing in Linux can drop power to that slot. All we can do is reset the root
+# port's link state machine and force it to re-run Detect/Polling, which may
+# succeed where the boot-time attempt failed. When it does not, only a cold power
+# cycle will do, and the script says so in the journal rather than failing quietly.
+#
+# Safe by construction: every action is gated on the interface being ALREADY
+# MISSING. On a healthy boot the script finds its interfaces present and exits
+# without touching any PCI device, so it can never disturb a working link.
+#
+# Usage:
+#   ansible-playbook playbooks/infra/pcie-nic-recovery.yml --limit pve03
+#   ansible-playbook playbooks/infra/pcie-nic-recovery.yml        # whole pve group
+
+- name: Install PCIe NIC link-training recovery
+  hosts: pve
+  serial: 1
+  vars:
+    recovery_script: /usr/local/sbin/pcie-nic-recovery.sh
+    recovery_conf: /etc/pcie-nic-recovery.conf
+    recovery_unit: pcie-nic-recovery.service
+
+  tasks:
+    # Only NICs sitting behind a real PCIe port are candidates. A root-complex
+    # integrated NIC (pve03's onboard eno1 is one — its parent is pci0000:00, not
+    # a bridge) has no parent port to reset and cannot fail this way, so it is
+    # filtered out here rather than special-cased in the boot script.
+    - name: Discover NICs behind a resettable PCIe port
+      shell: |
+        set -o pipefail
+        # The network config, including sourced fragments, with comments stripped.
+        NETCFG=$(cat /etc/network/interfaces /etc/network/interfaces.d/* 2>/dev/null | grep -vE '^[[:space:]]*#')
+        for dev in /sys/class/net/*/device; do
+          [ -e "$dev" ] || continue
+          iface=$(echo "$dev" | awk -F/ '{print $5}')
+          addr=$(basename "$(readlink -f "$dev")")
+          port=$(basename "$(dirname "$(readlink -f "$dev")")")
+          # Skip anything whose parent is not a PCI bridge exposing a rescan knob.
+          [ -e "/sys/bus/pci/devices/$port/rescan" ] || continue
+          # Only NICs the host actually depends on. pve01 and pve04 carry an unused
+          # wlp2s0 Wi-Fi card that appears in no network config; registering it
+          # would mean resetting PCI ports and failing the unit over hardware
+          # nothing uses. -w so nic0 does not match nic1.
+          echo "$NETCFG" | grep -qw "$iface" || continue
+          echo "$iface $addr $port"
+        done
+      args:
+        executable: /bin/bash
+      register: pcie_nics
+      changed_when: false
+      check_mode: no   # read-only probe; must still run under --check
+
+    - name: Skip hosts with no NIC behind a PCIe port
+      meta: end_host
+      when: pcie_nics.stdout | trim | length == 0
+
+    - name: Report discovered NICs
+      debug:
+        msg: "{{ inventory_hostname }}: recoverable NICs = {{ pcie_nics.stdout_lines }}"
+
+    # The PCI address and parent port are recorded at install time because at boot,
+    # when the card has vanished, there is nothing left to discover from — the
+    # whole point is that the device is not on the bus. Re-run this playbook after
+    # moving a card between slots.
+    - name: Write the recovery inventory
+      copy:
+        dest: "{{ recovery_conf }}"
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # iface pci_address parent_port
+          # Generated by playbooks/infra/pcie-nic-recovery.yml. Re-run that
+          # playbook after physically moving a NIC; the parent port is recorded
+          # here because a missing card cannot be discovered at boot.
+          {% for line in pcie_nics.stdout_lines %}
+          {{ line }}
+          {% endfor %}
+
+    - name: Deploy recovery script
+      copy:
+        dest: "{{ recovery_script }}"
+        owner: root
+        group: root
+        mode: "0755"
+        content: |
+          #!/bin/bash
+          # Recover a PCIe NIC that failed link training at boot.
+          # Every action is gated on the interface already being missing, so this
+          # is a no-op on a healthy boot.
+          set -u
+          CONF={{ recovery_conf }}
+          [ -r "$CONF" ] || exit 0
+          rc=0
+
+          while read -r IFACE ADDR PORT; do
+            case "${IFACE:-}" in ''|\#*) continue ;; esac
+            [ -n "${PORT:-}" ] || continue
+            # Present and healthy: leave it strictly alone.
+            [ -e "/sys/class/net/$IFACE" ] && continue
+
+            logger -t pcie-nic-recovery "MISSING $IFACE ($ADDR behind $PORT); attempting PCIe link recovery"
+
+            for attempt in 1 2 3; do
+              # Gentle first: reset the port's link state machine so it re-runs
+              # Detect/Polling from scratch, then look for new devices behind it.
+              if [ -w "/sys/bus/pci/devices/$PORT/reset_subordinate" ]; then
+                echo 1 > "/sys/bus/pci/devices/$PORT/reset_subordinate" 2>/dev/null || true
+                sleep 2
+              fi
+              echo 1 > "/sys/bus/pci/devices/$PORT/rescan" 2>/dev/null || true
+              sleep 2
+              [ -e "/sys/class/net/$IFACE" ] && break
+
+              # Harder: drop the port and re-enumerate from the root complex, which
+              # makes the kernel reprogram the bridge and retrain from a clean slate.
+              logger -t pcie-nic-recovery "attempt $attempt: rescan alone did not restore $IFACE, removing $PORT"
+              echo 1 > "/sys/bus/pci/devices/$PORT/remove" 2>/dev/null || true
+              sleep 2
+              echo 1 > /sys/bus/pci/rescan 2>/dev/null || true
+              sleep 3
+              [ -e "/sys/class/net/$IFACE" ] && break
+            done
+
+            if [ -e "/sys/class/net/$IFACE" ]; then
+              logger -t pcie-nic-recovery "RECOVERED $IFACE after PCIe link retrain"
+              # If networking already ran, ifup has missed its chance to enslave the
+              # port. Re-attach it to whichever bridge lists it, so a late recovery
+              # still restores the guest's connectivity.
+              BR=$(awk -v want="$IFACE" '
+                /^[[:space:]]*iface[[:space:]]+/ { cur=$2 }
+                /^[[:space:]]*bridge[-_]ports[[:space:]]+/ {
+                  for (i=2;i<=NF;i++) if ($i == want) print cur
+                }' /etc/network/interfaces 2>/dev/null | head -1)
+              if [ -n "${BR:-}" ] && [ -d "/sys/class/net/$BR" ] && [ ! -e "/sys/class/net/$BR/brif/$IFACE" ]; then
+                ip link set "$IFACE" up 2>/dev/null || true
+                ip link set "$IFACE" master "$BR" 2>/dev/null \
+                  && logger -t pcie-nic-recovery "re-enslaved $IFACE into $BR" \
+                  || logger -t pcie-nic-recovery "WARN could not enslave $IFACE into $BR"
+              fi
+            else
+              logger -t pcie-nic-recovery "FAILED to recover $IFACE; this slot has no software power control, a COLD power cycle is required"
+              rc=1
+            fi
+          done < "$CONF"
+
+          exit $rc
+
+    # Ordered ahead of networking so a recovered card is present by the time ifup
+    # builds the bridges. Without this the card can come back and still be left out
+    # of its bridge, which looks identical to the original failure from the guest.
+    - name: Install systemd unit
+      copy:
+        dest: "/etc/systemd/system/{{ recovery_unit }}"
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Recover PCIe NICs that failed link training at boot
+          Documentation=file:///usr/local/sbin/pcie-nic-recovery.sh
+          After=sysinit.target
+          Before=network-pre.target networking.service
+          Wants=network-pre.target
+          ConditionPathExists={{ recovery_conf }}
+
+          [Service]
+          Type=oneshot
+          RemainAfterExit=yes
+          ExecStart={{ recovery_script }}
+
+          [Install]
+          WantedBy=multi-user.target
+
+    # Skipped under --check because the unit file is not really written then, so
+    # systemd would fail to find it and report a failure that is an artefact of
+    # check mode rather than a real problem.
+    - name: Enable the unit
+      systemd:
+        name: "{{ recovery_unit }}"
+        enabled: yes
+        daemon_reload: yes
+      when: not ansible_check_mode
+
+    # Deliberately not started here. Starting it is safe (it no-ops when every
+    # interface is present) but running it has no value while the fleet is healthy,
+    # and the only meaningful test is a real warm reboot.
+    - name: Verify the script parses and the inventory is non-empty
+      shell: "bash -n {{ recovery_script }} && grep -cvE '^#|^$' {{ recovery_conf }}"
+      args:
+        executable: /bin/bash
+      register: recovery_check
+      changed_when: false
+      failed_when: recovery_check.rc != 0 or (recovery_check.stdout | trim | int) < 1
+      when: not ansible_check_mode
+
+    - name: Report
+      debug:
+        msg: >-
+          {{ inventory_hostname }}: {{ recovery_check.stdout | trim }} NIC(s) registered
+          for link recovery, unit enabled
+      when: not ansible_check_mode

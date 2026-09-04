@@ -34,10 +34,39 @@
           REQUEST="${REQUEST%"${REQUEST##*[![:space:]]}"}"   # rtrim
           case "$REQUEST" in
             healthcheck)
-              if systemctl is-active --quiet corosync && pvecm status 2>/dev/null | grep -q "Quorate"; then
+              # Quorum alone is not health. On 2026-09-01 pve03 rebooted quorate
+              # with the pfSense VM running and its WAN card absent from the PCI
+              # bus, so this branch returned HEALTHY while the whole site was
+              # offline. A bridge missing one of its ports is what that looks
+              # like from here, so it is now part of the verdict.
+              #
+              # Detail goes to stderr and syslog, never stdout: n8n matches on the
+              # stdout token, so stdout stays exactly "HEALTHY" or "NOT_HEALTHY"
+              # and the existing workflow keeps parsing it unchanged.
+              DETAIL=""
+              if ! { systemctl is-active --quiet corosync && pvecm status 2>/dev/null | grep -q "Quorate"; }; then
+                DETAIL="corosync down or node not quorate"
+              fi
+              BROKEN=$(awk '
+                /^[[:space:]]*iface[[:space:]]+/ { cur=$2 }
+                /^[[:space:]]*bridge[-_]ports[[:space:]]+/ {
+                  for (i=2;i<=NF;i++) if ($i != "none") print cur, $i
+                }' /etc/network/interfaces 2>/dev/null | while read -r br port; do
+                if [ ! -e "/sys/class/net/$port" ]; then
+                  echo "bridge $br: port $port does not exist (PCI device missing?)"
+                elif [ ! -e "/sys/class/net/$br/brif/$port" ]; then
+                  echo "bridge $br: port $port exists but is not enslaved"
+                fi
+              done)
+              if [ -n "$BROKEN" ]; then
+                DETAIL="${DETAIL:+${DETAIL}; }${BROKEN}"
+              fi
+              if [ -z "$DETAIL" ]; then
                 echo "HEALTHY"
                 exit 0
               fi
+              echo "$DETAIL" >&2
+              logger -t n8n-apt-upgrade "healthcheck failed: ${DETAIL}"
               echo "NOT_HEALTHY"
               exit 1
               ;;
