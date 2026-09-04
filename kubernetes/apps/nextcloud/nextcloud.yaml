@@ -112,6 +112,14 @@ spec:
   jobTemplate:
     spec:
       activeDeadlineSeconds: 240  # force-kill a hung run instead of letting it block forever
+      # KubeJobFailed follows the Job *object*, not the cron's current health, so a
+      # failed Job with no TTL alerts by email every day forever even after the next
+      # run succeeds. failedJobsHistoryLimit does not help: it caps the count, and
+      # the survivor then lingers indefinitely. Three nextcloud-cron corpses from
+      # 2026-08-25 were still paging on 2026-09-01. One hour is long enough to read
+      # the pod logs on a 5-minute schedule, short enough that a transient failure
+      # stops nagging on its own.
+      ttlSecondsAfterFinished: 3600
       template:
         spec:
           # RWO PVCs can only attach to one node at a time — co-locate with
