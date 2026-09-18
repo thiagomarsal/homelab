@@ -2,20 +2,30 @@
 
 ## Infrastructure Overview
 
-_Verified live against the cluster and `helm list -A` on 2026-08-18._
+_Verified live against the cluster and `helm list -A` on 2026-08-18; node table and
+fleet size updated 2026-09-18 after decommissioning pve01 and pve04._
 
 | Node | IP | Role | Host |
 |------|----|------|------|
-| k3s-master-1 | 192.168.1.50 | k3s server (bootstrap) | Proxmox VM (Debian 12) |
-| k3s-master-2 | 192.168.1.51 | k3s server | Proxmox VM (Debian 12) |
-| k3s-master-3 | 192.168.1.52 | k3s server | Proxmox VM (Debian 12) |
-| k3s-worker-1 | 192.168.1.53 | k3s agent (always-on) | Proxmox VM (Debian 12 cloud-init) |
-| k3s-worker-2 | 192.168.1.54 | k3s agent (always-on) | Proxmox VM (Debian 12 cloud-init) |
-| k3s-worker-3 | 192.168.1.55 | k3s agent (always-on) | Proxmox VM (Debian 12 cloud-init) |
+| k3s-master-2 | 192.168.1.51 | k3s server (bootstrap) | Proxmox VM (Debian 12), pve02 |
+| k3s-master-3 | 192.168.1.52 | k3s server | Proxmox VM (Debian 12), pve03 |
+| k3s-worker-2 | 192.168.1.54 | k3s agent (always-on) | Proxmox VM (Debian 12 cloud-init), pve05 |
+| k3s-worker-3 | 192.168.1.55 | k3s server (promoted 2026-09-18) | Proxmox VM (Debian 12 cloud-init), pve06 |
 | k3s-worker-4 | 192.168.1.56 | k3s agent (always-on) | Proxmox VM (Debian 12 cloud-init), pve07 |
 | k3s-worker-5 | 192.168.1.57 | k3s agent (always-on) | Proxmox VM (Debian 12 cloud-init), pve08 |
 
-- **Proxmox cluster**: 8-node (pve01–pve08, 192.168.1.10–17), all always-on, zero on-demand nodes
+**k3s-master-1 (pve01) and k3s-worker-1 (pve04) were decommissioned 2026-09-18.**
+pve01 held an etcd member; before removing it, k3s-worker-3 (pve06) was drained,
+had its k3s-agent uninstalled, and rejoined as a k3s server to keep etcd at 3
+members throughout (never dropped below 3). pve04 was a plain worker with no
+etcd role, so it was a straightforward drain + remove. Both PVE hosts had their
+Longhorn replicas evicted and workloads (`hoa/mariadb`, `hoa/wordpress`,
+`traefik`, `n8n`, `porquinho-postgres`) verified rescheduled and healthy before
+any uninstall. See `ansible/inventory/hosts.yml` — `k3s_init: true` (the
+bootstrap flag, only used for a from-scratch disaster-recovery rebuild) moved
+from k3s-master-1 to k3s-master-2.
+
+- **Proxmox cluster**: 6-node (pve02, pve03, pve05, pve06, pve07, pve08 — 192.168.1.11–17, excluding .13), all always-on, zero on-demand nodes
 - **Storage**: no cluster-wide ZFS pool — Longhorn (in-cluster) is the shared storage layer; each pve host uses local SATA/NVMe/lvmthin storage only
 - **k3s version**: v1.34.5+k3s1 (Debian 12 bookworm, kernel 6.1.0-52, containerd 2.1.5-k3s1)
 - **HA VIP**: 192.168.1.60 (kube-vip v0.8.7 — note: `group_vars/all.yml` pins `kubevip_version: v0.9.1`, live pods still run v0.8.7, so a fresh node-add would drift from the fleet until this is reconciled)
@@ -24,49 +34,55 @@ _Verified live against the cluster and `helm list -A` on 2026-08-18._
 - **DNS**: Cloudflare (external) + Pi-hole (internal)
 - **Router**: pfSense 192.168.1.1 (VM on pve03) — port forwards 80/443 → Traefik MetalLB IP
 
-### Proxmox host hardware (verified live 2026-08-28; RAM column updated 2026-09-11)
+### Proxmox host hardware (verified live 2026-08-28; RAM updated 2026-09-11; pve01/pve04 decommissioned 2026-09-18)
 
 | Host | IP | Chassis | CPU | RAM (max) | Storage | NIC(s) | Guests |
 |---|---|---|---|---|---|---|---|
-| pve01 | .10 | generic mini-PC | N95, 4C/4T | 12GB soldered (12GB) | 238GB SATA SSD (G537N1) | `nic0` r8169 | k3s-master-1 (110) |
 | pve02 | .11 | **Lenovo ThinkCentre M80q** (11DQS0P500) | **i7-10700T, 8C/16T** | 32GB 2×16 DDR4-3200 (**64GB**) | 954GB Samsung NVMe (`local-lvm` 855GB) | `nic0` I219-LM **e1000e** | k3s-master-2 (111), template 9002 |
 | pve03 | .12 | **Lenovo ThinkCentre M900 Tiny** (10FM001GUS) | **i7-6700T, 4C/8T** | **32GB 2×16 DDR4-3200AA (32GB, ceiling)** — Micron MTA8ATF2G64HZ-3G2B2 + SK hynix HMAA2GS6CJR8N, 1Rx8, downclocked to platform's 2133 max | 1TB Samsung 870 EVO (`ssd-storage`) + 238GB SK hynix BC711 NVMe (boot, `local-lvm`) + 466GB ST500LT012 HDD (`usb-backup`) | `eno1` I219-LM **e1000e** → vmbr0; `enp2s0` RTL8125 2.5GbE r8169 → vmbr1 | pfSense (106), k3s-master-3 (112), **pihole (CT101)**, **uptime-kuma (CT102)**, immich (CT100, stopped) |
-| pve04 | .13 | Kamrui AK1 Plus | N95, 4C/4T | 8GB, 1 slot (16GB) | 1TB Samsung 870 EVO + 238GB SATA SSD | `nic0` r8169 | k3s-worker-1 (115) |
 | pve05 | .14 | HP ProDesk 600 G4 DM (TAA) | i5-8500T, 6C/6T | **32GB 2×16 DDR4-2666V (32GB, ceiling)** — Samsung STYA100193755A870 + SK hynix HMA82GS6JJR8N, 2Rx8, runs at native 2666 | 954GB Samsung NVMe + 1TB ST1000LM024 HDD (not in any `pvesm` pool) | `eno1` I219-LM **e1000e** | k3s-worker-2 (114) |
-| pve06 | .15 | HP ProDesk 600 G4 DM (TAA) | i5-8500T, 6C/6T | 24GB (16+8, flex mode) (32GB) | 238GB Micron SSD | `nic0` I219-LM **e1000e** | k3s-worker-3 (116) |
+| pve06 | .15 | HP ProDesk 600 G4 DM (TAA) | i5-8500T, 6C/6T | 24GB (16+8, flex mode) (32GB) | 238GB Micron SSD | `nic0` I219-LM **e1000e** | k3s-worker-3 (116) — **promoted to k3s server 2026-09-18**, now also carries an etcd member |
 | pve07 | .16 | HP ProDesk 600 G4 DM (TAA) | i5-8500T, 6C/6T | 32GB 2×16 (32GB) | 238GB Micron SSD | `nic0` I219-LM **e1000e** | k3s-worker-4 (117), template 9007 |
 | pve08 | .17 | HP ProDesk 600 G4 DM (TAA) | i5-8500T, 6C/6T | 32GB 2×16 (32GB) | 238GB Micron SSD | `nic0` I219-LM **e1000e** | k3s-worker-5 (118), template 9008 |
 
-Fleet total **204GB RAM** (was 172GB before the 2026-09-11 upgrade — pve03 and
-pve05 each went 16GB→32GB, pulling 4x old 8GB sticks now banked as spares).
-Every slot is occupied, and every board except pve02's caps at 32GB — pve01 and
-pve04 are dead ends (soldered / single-slot, decommission candidates), and
-pve03/05/06/07/08 are now all at their 32GB ceiling except pve06 (24GB, still
-has 8GB of headroom if a stick becomes available). **pve02 is the sole host
-that can exceed 32GB** (2 slots, 64GB max), which makes it the natural home for
-anything that outgrows the rest of the fleet.
+**pve01 (.10) and pve04 (.13) were decommissioned and wiped 2026-09-18** —
+pve01 was a 12GB-soldered N95 mini-PC hosting k3s-master-1 (an etcd member),
+pve04 was an 8GB/1-slot Kamrui AK1 Plus hosting k3s-worker-1. Both were
+permanent RAM dead ends (see the ceiling notes in prior versions of this doc)
+and are no longer part of the fleet. See
+[[project_ram_upgrade_and_pve01_pve04_decommission]] in memory for the full
+procedure and gotchas (Longhorn eviction is per-disk, not just per-node —
+`evictionRequested` must be set on both the node and its disk, and
+`allowScheduling: false` must precede each).
+
+Fleet total **184GB RAM** across 6 hosts (was 204GB across 8 before removing
+pve01's 12GB and pve04's 8GB). Every remaining board except pve02's caps at
+32GB, and pve03/05/07/08 are now all at their 32GB ceiling except pve06 (24GB,
+still has 8GB of headroom if a stick becomes available). **pve02 is the sole
+host that can exceed 32GB** (2 slots, 64GB max), which makes it the natural
+home for anything that outgrows the rest of the fleet.
 
 All four ProDesks report the TAA product string, so pve05–pve08 are one
 identical quad of chassis; only their RAM configs differ. The i5-8500T caps at
 2666 MT/s, so the 3200-rated sticks in pve06/07/08 all run at 2667.
 
-#### Guest allocation and storage fill (live 2026-08-28)
+#### Guest allocation and storage fill (live 2026-08-28; pve01/pve04 rows removed 2026-09-18, not re-swept for the rest)
 
 | Host | Host RAM | Allocated to guests | `local-lvm` fill | Other pools |
 |---|---|---|---|---|
-| pve01 | 11.7GB | 9.2GB (VM110) | **70%** of 141GB | — |
 | pve02 | 31.8GB | 10GB (VM111) | 1.5% of 816GB | — |
 | pve03 | 15.9GB | **13.3GB** (106+112+CT101+CT102) | 3.8% of 141GB | `ssd-storage` 55% of 913GB, `usb-backup` 9% of 457GB |
-| pve04 | 7.7GB | 6GB (VM115) | 52% of 141GB | — |
 | pve05 | 15.8GB | 12GB (VM114) | 11% of 816GB | 1TB HDD unpooled |
-| pve06 | 23.8GB | 12GB (VM116) | 41% of 141GB | — |
+| pve06 | 23.8GB | 12GB (VM116) + etcd/control-plane since 2026-09-18 | 41% of 141GB | — |
 | pve07 | 31.9GB | 12GB (VM117) | 29% of 141GB | — |
 | pve08 | 31.9GB | 12GB (VM118) | 55% of 141GB | — |
 
 **Host RAM for pve03/pve05 above (15.9GB/15.8GB) predates the 2026-09-11 RAM
 upgrade and hasn't been re-swept live** — both are now 32GB installed, expect
-~31.8-31.9GB reported like the other 32GB boards. Re-verify with `free -h`
-before trusting the fill percentages for those two rows.
+~31.8-31.9GB reported like the other 32GB boards. pve06's allocation also
+predates its 2026-09-18 promotion to k3s server, which added etcd load without
+changing its VM's memory reservation. Re-verify with `free -h` and
+`kubectl top nodes` before trusting these figures.
 
 Every guest runs `balloon: 0`, so host-level `free` overstates pressure — judge
 by allocation-vs-host-RAM and by `kubectl top nodes`, not by `free` on the
