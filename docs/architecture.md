@@ -3,7 +3,9 @@
 ## Infrastructure Overview
 
 _Verified live against the cluster and `helm list -A` on 2026-08-18; node table and
-fleet size updated 2026-09-18 after decommissioning pve01 and pve04._
+fleet size updated 2026-09-18 after decommissioning pve01 and pve04; full
+per-host hardware inventory (CPU/RAM/storage detail) and fleet health refreshed
+2026-09-20._
 
 | Node | IP | Role | Host |
 |------|----|------|------|
@@ -34,16 +36,58 @@ from k3s-master-1 to k3s-master-2.
 - **DNS**: Cloudflare (external) + Pi-hole (internal)
 - **Router**: pfSense 192.168.1.1 (VM on pve03) — port forwards 80/443 → Traefik MetalLB IP
 
-### Proxmox host hardware (verified live 2026-08-28; RAM updated 2026-09-11; pve01/pve04 decommissioned 2026-09-18)
+### Proxmox host hardware (verified live 2026-09-20 via direct SSH to all 6 hosts; RAM previously updated 2026-09-11; pve01/pve04 decommissioned 2026-09-18)
 
-| Host | IP | Chassis | CPU | RAM (max) | Storage | NIC(s) | Guests |
-|---|---|---|---|---|---|---|---|
-| pve02 | .11 | **Lenovo ThinkCentre M80q** (11DQS0P500) | **i7-10700T, 8C/16T** | 32GB 2×16 DDR4-3200 (**64GB**) | 954GB Samsung NVMe (`local-lvm` 855GB) | `nic0` I219-LM **e1000e** | k3s-master-2 (111), template 9002 |
-| pve03 | .12 | **Lenovo ThinkCentre M900 Tiny** (10FM001GUS) | **i7-6700T, 4C/8T** | **32GB 2×16 DDR4-3200AA (32GB, ceiling)** — Micron MTA8ATF2G64HZ-3G2B2 + SK hynix HMAA2GS6CJR8N, 1Rx8, downclocked to platform's 2133 max | 1TB Samsung 870 EVO (`ssd-storage`) + 238GB SK hynix BC711 NVMe (boot, `local-lvm`) + 466GB ST500LT012 HDD (`usb-backup`) | `eno1` I219-LM **e1000e** → vmbr0; `enp2s0` RTL8125 2.5GbE r8169 → vmbr1 | pfSense (106), k3s-master-3 (112), **pihole (CT101)**, **uptime-kuma (CT102)**, immich (CT100, stopped) |
-| pve05 | .14 | HP ProDesk 600 G4 DM (TAA) | i5-8500T, 6C/6T | **32GB 2×16 DDR4-2666V (32GB, ceiling)** — Samsung STYA100193755A870 + SK hynix HMA82GS6JJR8N, 2Rx8, runs at native 2666 | 954GB Samsung NVMe + 1TB ST1000LM024 HDD (not in any `pvesm` pool) | `eno1` I219-LM **e1000e** | k3s-worker-2 (114) |
-| pve06 | .15 | HP ProDesk 600 G4 DM (TAA) | i5-8500T, 6C/6T | 24GB (16+8, flex mode) (32GB) | 238GB Micron SSD | `nic0` I219-LM **e1000e** | k3s-worker-3 (116) — **promoted to k3s server 2026-09-18**, now also carries an etcd member |
-| pve07 | .16 | HP ProDesk 600 G4 DM (TAA) | i5-8500T, 6C/6T | 32GB 2×16 (32GB) | 238GB Micron SSD | `nic0` I219-LM **e1000e** | k3s-worker-4 (117), template 9007 |
-| pve08 | .17 | HP ProDesk 600 G4 DM (TAA) | i5-8500T, 6C/6T | 32GB 2×16 (32GB) | 238GB Micron SSD | `nic0` I219-LM **e1000e** | k3s-worker-5 (118), template 9008 |
+| Host | IP | Chassis | Baseboard | CPU | RAM (installed/max) | Storage (summary) | NIC(s) | Guests |
+|---|---|---|---|---|---|---|---|---|
+| pve02 | .11 | **Lenovo ThinkCentre M80q** (11DQS0P500, SN MJ0E003Z) | Lenovo 316C | **i7-10700T, 8C/16T**, 2.0GHz base / 4.5GHz max | 32GB 2×16GB DDR4-3200 (**64GB max, 2 slots**) | 954GB Samsung NVMe SSD (`local-lvm` 855GB) | `nic0` I219-LM **e1000e** | k3s-master-2 (111), template 9002 |
+| pve03 | .12 | **Lenovo ThinkCentre M900 Tiny** (10FM001GUS, SN MJ03Z0M7) | Lenovo 30D0 | **i7-6700T, 4C/8T**, 2.8GHz base / 4.2GHz max | 32GB 2×16GB DDR4-2133 (**32GB ceiling**), mixed brand, 1Rx8 | 238GB SK hynix NVMe SSD (boot, `local-lvm`) + 1TB Samsung 870 EVO SATA SSD (`ssd-storage`) + 466GB Seagate ST500LT012 USB HDD (`usb-backup`) | `eno1` I219-LM **e1000e** → vmbr0; `enp2s0` RTL8125 2.5GbE r8169 → vmbr1 | pfSense (106), k3s-master-3 (112), **pihole (CT101)**, **uptime-kuma (CT102)**, immich (CT100, stopped) |
+| pve05 | .14 | HP ProDesk 600 G4 DM (TAA, SN MXL9231VXM) | HP 83EF | i5-8500T, 6C/6T (no HT), 2.1GHz base / 3.5GHz max | 32GB 2×16GB DDR4-2667 (**32GB ceiling**), mixed brand, 2Rx8 | 954GB Samsung NVMe SSD (`local-lvm`) + **1TB Seagate ST1000LM024 SATA HDD, unpooled/idle** | `eno1` I219-LM **e1000e** | k3s-worker-2 (114) |
+| pve06 | .15 | HP ProDesk 600 G4 DM (TAA, SN MXL92854JV) | HP 83EF | i5-8500T, 6C/6T (no HT), 2.1GHz base / 3.5GHz max | 24GB (16+8, asymmetric, mixed brand) (**32GB ceiling, 1 slot free-ish**) | 238GB Micron SATA SSD | `nic0` I219-LM **e1000e** | k3s-worker-3 (116) — **promoted to k3s server 2026-09-18**, now also carries an etcd member |
+| pve07 | .16 | HP ProDesk 600 G4 DM (TAA, SN MXL9221RWG) | HP 83EF | i5-8500T, 6C/6T (no HT), 2.1GHz base / 3.5GHz max | 32GB 2×16GB DDR4-3200 (**32GB ceiling**), mixed brand (one unidentified JEDEC vendor) | 238GB Micron SATA SSD | `nic0` I219-LM **e1000e** | k3s-worker-4 (117), template 9007 |
+| pve08 | .17 | HP ProDesk 600 G4 DM (TAA, SN MXL92857QD) | HP 83EF | i5-8500T, 6C/6T (no HT), 2.1GHz base / 3.5GHz max | 32GB 2×16GB DDR4-3200, both Micron (**32GB ceiling**) | 238GB Micron SATA SSD | `nic0` I219-LM **e1000e** | k3s-worker-5 (118), template 9008 |
+
+#### Memory detail (per-DIMM, `dmidecode -t memory`, 2026-09-20)
+
+| Host | Slot | Size | Rated speed | Brand | Part number | Configured speed |
+|---|---|---|---|---|---|---|
+| pve02 | ChannelA-DIMM0 | 16GB | DDR4-3200 | Samsung | M471A2K43DB1-CWE | 2933 MT/s |
+| pve02 | ChannelB-DIMM0 | 16GB | DDR4-3200 | Samsung | M471A2K43DB1-CWE | 2933 MT/s |
+| pve03 | ChannelA-DIMM0 | 16GB | DDR4-2133 | Micron | 8ATF2G64HZ-3G2B2 | 2133 MT/s |
+| pve03 | ChannelB-DIMM0 | 16GB | DDR4-2133 | SK hynix | HMAA2GS6CJR8N-XN | 2133 MT/s |
+| pve05 | DIMM1 (ChannelB) | 16GB | DDR4-2667 | Hynix/Hyundai | HMA82GS6JJR8N-VK | 2667 MT/s |
+| pve05 | DIMM3 (ChannelA) | 16GB | DDR4-2667 | Samsung | M471A2K43DB1-CTD | 2667 MT/s |
+| pve06 | DIMM1 (ChannelB) | 16GB | DDR4-3200 | Samsung | M471A2G43BB2-CWE | 2667 MT/s |
+| pve06 | DIMM3 (ChannelA) | 8GB | DDR4-2667 | Hynix/Hyundai | HMA81GS6JJR8N-VK | 2667 MT/s |
+| pve07 | DIMM1 (ChannelB) | 16GB | DDR4-3200 | **Unknown vendor** (JEDEC ID 0x450B) | WPBH32D416SWA-16G | 2667 MT/s |
+| pve07 | DIMM3 (ChannelA) | 16GB | DDR4-3200 | SK hynix | HMAA2GS6CJR8N-XN | 2667 MT/s |
+| pve08 | DIMM1 (ChannelB) | 16GB | DDR4-3200 | Micron | 8ATF2G64HZ-3G2E2 | 2667 MT/s |
+| pve08 | DIMM3 (ChannelA) | 16GB | DDR4-3200 | Micron | 16ATF2G64HZ-3G2J1 | 2667 MT/s |
+
+2933 MT/s on pve02 is the i7-10700T's official supported ceiling for non-K desktop
+Comet Lake, not a downclock — that pair is running at spec. The 2667 MT/s on
+every ProDesk (pve05-08) is the i5-8500T platform's documented max regardless of
+the DIMMs being 3200-rated, also expected. pve03's 2133 MT/s matches the
+i7-6700T's official ceiling. None of these are misconfigurations.
+
+#### Storage detail (bus, class, brand — `lsblk`/`smartctl`, 2026-09-20)
+
+| Host | Device | Bus | Class | Size | Brand / model | Role |
+|---|---|---|---|---|---|---|
+| pve02 | nvme0n1 | NVMe (M.2 PCIe) | SSD | 953.9GB | Samsung MZVLB1T0HBLR-000L7 | OS + `local-lvm` |
+| pve03 | nvme0n1 | NVMe (M.2 PCIe) | SSD | 238.5GB | SK hynix BC711 | OS boot + `local-lvm` |
+| pve03 | sda | SATA III (6.0 Gb/s) | SSD | 931.5GB | Samsung 870 EVO 1TB | `ssd-storage` pool |
+| pve03 | sdb | USB (external, hot-plug) | HDD, 5400 RPM | 465.8GB | Seagate ST500LT012-1DG142 | `usb-backup` (nofail mount, does not auto-remount) |
+| pve05 | nvme0n1 | NVMe (M.2 PCIe) | SSD | 953.9GB | Samsung MZVLW1T0HMLH-000L2 | OS + `local-lvm` |
+| pve05 | sda | SATA (2.6/3.0 Gb/s, drive-limited) | HDD, 5400 RPM | 931.5GB | Seagate ST1000LM024 HN-M101MBB | **not in any `pvesm` pool — fully idle** |
+| pve06 | sda | SATA III (6.0 Gb/s) | SSD | 238.5GB | Micron MTFDDAK256TBN-1AR1ZABHA | OS + `local-lvm` |
+| pve07 | sda | SATA III (6.0 Gb/s) | SSD | 238.5GB | Micron MTFDDAK256TBN-1AR1ZABHA | OS + `local-lvm` |
+| pve08 | sda | SATA III (6.0 Gb/s) | SSD | 238.5GB | Micron MTFDDAK256TBN-1AR1ZABHA | OS + `local-lvm` |
+
+SMART overall-health is `PASSED` on every drive above, all 9 spinning/flash
+devices across the 6 hosts. Power-on hours: pve03's USB HDD leads at 11,362h,
+followed by pve05's NVMe at 10,628h — both previously flagged, still nowhere
+near end-of-life, still the two to watch first.
 
 **pve01 (.10) and pve04 (.13) were decommissioned and wiped 2026-09-18** —
 pve01 was a 12GB-soldered N95 mini-PC hosting k3s-master-1 (an etcd member),
@@ -100,8 +144,52 @@ nothing near end of life, but those three are the first to watch.
 is what originally caused the pve04 overcommit. Reduce it or pass `MEMORY=` at
 provision time.
 
-**PVE version drift:** pve02 runs 9.2.11 (it shipped newer and was patched to
-join), the other seven run 9.2.10. Harmless, but the fleet is no longer uniform.
+**PVE version drift resolved:** all 6 hosts now report `pve-manager/9.2.11` as
+of 2026-09-20 (was pve02-only in the 2026-08-28 pass, other hosts on 9.2.10).
+Fleet is uniform again.
+
+#### 2026-09-20 fleet health & cleanup pass
+
+Full hardware inventory (above) plus live health check across all 6 hosts via
+direct SSH (`~/.ssh/id_k3s`, root). Findings:
+
+- **SMART: PASSED on every drive, no immediate concerns.** Load averages are
+  low everywhere (highest is pve03 at ~1.6, expected given its 4 guests);
+  no host is memory- or CPU-pressured.
+- **Same 93 apt packages pending on all 6 hosts.** Identical count fleet-wide
+  means nothing has been patched since the last run — consistent with
+  [[project_n8n_pve_upgrade_automation]]'s next scheduled window (1 Oct 2026).
+  No action needed before then.
+- **Journals and apt caches are healthy.** Apt caches are 20-36K everywhere
+  (the `apt-get clean` fix from 2026-08-28 is holding). Journals range 24M-491.8M
+  against the 500M cap; pve03 is closest to its ceiling (busiest host, 4 guests),
+  which just means it rotates out older entries sooner — not a fault.
+- **pve02's template 9002 fixed 2026-09-20** — cut from 12288MB to 4096MB
+  (`qm set 9002 --memory 4096`), now matching 9007/9008. This was the last
+  outstanding template-RAM item from 2026-08-28.
+- **pve05's 1TB Seagate ST1000LM024 HDD is still fully idle** — not in any
+  `pvesm` storage pool, not mounted, spinning for nothing. It's a 5400 RPM
+  laptop drive already SATA-II-limited by the drive itself (3.0 Gb/s, not the
+  controller). Options: add it as a second Longhorn disk on k3s-worker-2 for
+  extra (slower) replica capacity, repurpose it as a second `usb-backup`-style
+  target, or physically pull it — it contributes nothing today and is pure
+  power draw + failure surface.
+- **RAM is comfortable fleet-wide.** Every 32GB-ceiling ProDesk (pve05/07/08)
+  is already maxed; pve06 has 24GB (8GB of headroom if a matching stick turns
+  up, not urgent — no memory pressure observed). pve02 remains the only host
+  that can go past 32GB (64GB max, 2 slots), so it stays the natural landing
+  spot for anything that outgrows the rest of the fleet.
+- **No stray VMs/CTs, no leftover kernels.** `qm list`/`pct list` match the
+  canonical table above exactly (only the known stopped templates 9002/9007/9008
+  and the intentionally-stopped immich CT100). Zero extra `pve-kernel-*`
+  packages installed anywhere, so `autoremove` is doing its job.
+- **On buying a replacement mini PC:** current data doesn't show a capacity
+  gap. `local-lvm`/pool fill sits 5-36% across the fleet, RAM headroom exists
+  on pve02 and pve06, and no host shows sustained load or memory pressure. The
+  pve01/pve04 sale proceeds don't need to be reinvested for capacity reasons —
+  only revisit this if a specific new workload (e.g. a resource-heavy app,
+  or restoring pve03's DNS-off-Intel-NIC goal with a Realtek-NIC minipc,
+  see the concentration-risk note above) creates a concrete need.
 
 #### 2026-08-28 disk cleanup
 
