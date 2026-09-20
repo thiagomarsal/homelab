@@ -89,6 +89,10 @@
     --set providers.kubernetesCRD.enabled=true
     --set providers.kubernetesIngress.enabled=true
     --set ingressRoute.dashboard.enabled=false
+    --set resources.requests.cpu=50m
+    --set resources.requests.memory=128Mi
+    --set resources.limits.cpu=1
+    --set resources.limits.memory=1Gi
     --wait --timeout 5m
   environment:
     KUBECONFIG: /etc/rancher/k3s/k3s.yaml

@@ -15,10 +15,14 @@ spec:
     spec:
       containers:
       - name: ddns
-        image: oznu/cloudflare-ddns:latest
-        imagePullPolicy: Always
+        # Pinned to the digest actually running (verified 2026-09-20) — oznu/cloudflare-ddns
+        # has had NO version tags since 2021 (repo is effectively abandoned upstream), so
+        # `:latest` was the only tag available and gave zero drift protection. If this ever
+        # needs to move, consider a maintained fork (e.g. favonia/cloudflare-ddns) instead.
+        image: oznu/cloudflare-ddns@sha256:19bd73d8aea9641dc329ec18ae693b2b9c33ff7cdc007f368266ce584446f995
+        imagePullPolicy: IfNotPresent
         env:
-        - name: API_KEY 
+        - name: API_KEY
           valueFrom:
             secretKeyRef:
               name: cloudflare-token
@@ -55,8 +59,10 @@ spec:
     spec:
       containers:
       - name: ddns
-        image: oznu/cloudflare-ddns:latest
-        imagePullPolicy: Always
+        # Pinned to the digest actually running (verified 2026-09-20) — see cloudflare-ddns
+        # deployment above for why this is a digest, not a tag.
+        image: oznu/cloudflare-ddns@sha256:19bd73d8aea9641dc329ec18ae693b2b9c33ff7cdc007f368266ce584446f995
+        imagePullPolicy: IfNotPresent
         env:
         - name: API_KEY
           valueFrom:

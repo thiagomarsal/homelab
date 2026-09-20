@@ -153,6 +153,15 @@ prometheus:
       kubernetes.io/hostname: k3s-worker-2
     retention: 15d
     retentionSize: "7GB"
+    # Added 2026-09-20 fleet review: was completely unbounded. Request matches the
+    # observed ~1.6Gi steady-state RSS; limit leaves headroom for compaction/query bursts.
+    resources:
+      requests:
+        cpu: 100m
+        memory: 1536Mi
+      limits:
+        cpu: "1"
+        memory: 3Gi
     storageSpec:
       volumeClaimTemplate:
         spec:
@@ -194,6 +203,14 @@ grafana:
     enabled: true
     storageClassName: longhorn
     size: 1Gi
+  # Added 2026-09-20 fleet review: was completely unbounded.
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
   dashboardProviders:
     dashboardproviders.yaml:
       apiVersion: 1
@@ -243,3 +260,23 @@ kubeEtcd:
 
 kubeStateMetrics:
   enabled: true
+
+# Added 2026-09-20 fleet review: was completely unbounded.
+kube-state-metrics:
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+
+# Added 2026-09-20 fleet review: was completely unbounded.
+prometheusOperator:
+  resources:
+    requests:
+      cpu: 20m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi

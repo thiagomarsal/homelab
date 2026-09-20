@@ -41,7 +41,11 @@ metallb_ip_range: "192.168.1.61-192.168.1.199"
 # Rancher configuration
 rancher_hostname: "rancher.tmf-solutions.com"  # Update with your actual domain
 rancher_version: "2.13.3"
-cert_manager_version: "v1.16.3"
+# v1.16.4+ required: Cloudflare stopped embedding zone IDs in DNS record
+# responses (Nov 2024 API change), which broke cert-manager's DNS-01 cleanup
+# on v1.16.3 with "Could not route to /zones//dns_records/..." — cert-manager
+# issue #7540 / PR #7549. Bumped to the latest 1.16.x patch on 2026-09-20.
+cert_manager_version: "v1.16.5"
 
 # Common packages to install on all nodes
 common_packages:

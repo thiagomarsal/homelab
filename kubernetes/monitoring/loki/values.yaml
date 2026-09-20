@@ -49,6 +49,16 @@ singleBinary:
     enabled: true
     storageClass: longhorn
     size: 10Gi
+  # Added 2026-09-20 fleet review, applied by hand via `kubectl patch statefulset -n
+  # monitoring loki` for the same reason as the ruler config above — no Helm release
+  # to `upgrade` against. Request matches observed ~430-455Mi steady-state RSS.
+  resources:
+    requests:
+      cpu: 20m
+      memory: 512Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
   # No node pinning or exclusion on purpose: let the scheduler place Loki. When
   # pve06 died on 2026-08-15 Loki went with it, but the cause was not placement —
   # a StatefulSet pod holding an RWO Longhorn volume cannot reschedule while its
