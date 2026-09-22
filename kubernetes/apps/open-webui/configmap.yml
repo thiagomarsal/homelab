@@ -1,0 +1,14 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: open-webui-config
+  namespace: open-webui
+data:
+  WEBUI_NAME: "Porquinho"
+  WEBUI_URL: "https://ai.tmf-solutions.com"
+  # Signup stays open until the first (admin) account is created in Task 4 —
+  # Open WebUI makes the FIRST registered user an admin automatically. Task 4
+  # flips this to "false" once that account exists, since this is meant to
+  # be single-user.
+  ENABLE_SIGNUP: "true"
