@@ -1,0 +1,19 @@
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: open-webui
+  namespace: open-webui
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`ai.tmf-solutions.com`)
+      kind: Rule
+      middlewares:
+        - name: open-webui-lan-only
+      services:
+        - name: open-webui
+          port: 80
+  tls:
+    secretName: wildcard-tmf-solutions-tls
