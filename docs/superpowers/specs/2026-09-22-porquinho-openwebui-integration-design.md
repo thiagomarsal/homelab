@@ -99,7 +99,7 @@ deployed.
                                 │
                     Traefik (websecure, wildcard TLS)
                                 │
-                 openwebui.tmf-solutions.com
+                 ai.tmf-solutions.com
                        (LAN + pod CIDR only)
                                 │
                             Browser
@@ -143,9 +143,12 @@ Files, matching the n8n directory shape:
 - `service.yml` — ClusterIP, port matching the image's default (8080)
 - `middleware.yml` — `open-webui-lan-only`, `ipAllowList` sourceRange
   `192.168.1.0/24` + `10.42.0.0/16` (copy of porquinho's)
-- `ingressroute.yml` — `Host(\`openwebui.tmf-solutions.com\`)`, `websecure`
+- `ingressroute.yml` — `Host(\`ai.tmf-solutions.com\`)`, `websecure`
   entrypoint, `wildcard-tmf-solutions-tls` secret, `open-webui-lan-only`
   middleware attached
+
+Pi-hole already has `ai.tmf-solutions.com` → Traefik's MetalLB VIP, done
+ahead of this spec — no DNS work left once the IngressRoute exists.
 
 No `secret.yml` — per Decision 6, nothing in the manifest set needs one.
 
@@ -172,7 +175,7 @@ Not represented in git — this is runtime state in Open WebUI's own database:
   specific ticker's recent vacância — confirm the model calls `searchReports`
   (visible in Open WebUI's tool-call UI) and the reply cites a real date and URL
   from the corpus rather than answering from pretraining.
-- Confirm `openwebui.tmf-solutions.com` is unreachable from outside
+- Confirm `ai.tmf-solutions.com` is unreachable from outside
   `192.168.1.0/24` (e.g. via mobile data with wifi off) and reachable from LAN.
 
 ## 9. Risks
