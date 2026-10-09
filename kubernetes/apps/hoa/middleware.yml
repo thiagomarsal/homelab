@@ -1,0 +1,26 @@
+---
+# Deny-all for xmlrpc.php: allow-list contains only a TEST-NET-1 address that no client can have.
+# Nothing legitimate uses xmlrpc (no Jetpack/mobile app); logs showed ~2.2k scanner POSTs / 72h.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: hoa-block-xmlrpc
+  namespace: hoa
+spec:
+  ipAllowList:
+    sourceRange:
+      - 192.0.2.1/32
+---
+# Low-risk browser hardening headers. HSTS and CSP intentionally omitted (HSTS hard to roll
+# back; CSP can break Elementor / Fluent Forms scripts).
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: hoa-security-headers
+  namespace: hoa
+spec:
+  headers:
+    contentTypeNosniff: true
+    referrerPolicy: strict-origin-when-cross-origin
+    customResponseHeaders:
+      X-Frame-Options: SAMEORIGIN
