@@ -1,0 +1,57 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: af-login-rate-limit-plugin
+  namespace: hoa
+data:
+  auburn-fields-login-rate-limit.php: |
+    <?php
+    /**
+     * Auburn Fields HOA — login rate-limiter (no 3rd-party plugin; see item #8 of the 2026-10-09
+     * security review). Keyed on the real visitor IP via CF-Connecting-IP, which is now trustworthy
+     * because hoa-origin-protection (Traefik Middleware) blocks any request that didn't come through
+     * Cloudflare or the LAN -- so this header can no longer be spoofed by a direct-origin request.
+     */
+    
+    define('AF_LOGIN_MAX_ATTEMPTS', 5);
+    define('AF_LOGIN_WINDOW',       15 * MINUTE_IN_SECONDS);
+    define('AF_LOGIN_LOCKOUT',      15 * MINUTE_IN_SECONDS);
+    
+    function af_login_client_ip() {
+        // Only trust CF-Connecting-IP: real visitor IP, reliable because hoa-origin-protection
+        // already rejects anything not from Cloudflare or the LAN. REMOTE_ADDR itself is always
+        // Traefik's in-cluster pod IP (confirmed 2026-10-10), so it is not usable here.
+        $ip = $_SERVER['HTTP_CF_CONNECTING_IP'] ?? $_SERVER['REMOTE_ADDR'] ?? '';
+        return preg_match('/^[0-9a-fA-F:.]{1,45}$/', $ip) ? $ip : '0.0.0.0';
+    }
+    
+    function af_login_lock_key($ip)    { return 'af_ll_lock_'  . md5($ip); }
+    function af_login_count_key($ip)   { return 'af_ll_count_' . md5($ip); }
+    
+    add_filter('authenticate', function ($user, $username, $password) {
+        if (empty($username) && empty($password)) return $user; // initial GET render, not a submit
+        if (!get_transient(af_login_lock_key(af_login_client_ip()))) return $user;
+        // Overrides whatever core resolved (even a correct password) -- must run AFTER core's own
+        // authenticate callbacks (wp_authenticate_username_password / _email_password, priority 20),
+        // otherwise core ignores our WP_Error and keeps checking credentials itself, silently
+        // undoing the lockout. This is a known footgun with the 'authenticate' filter.
+        return new WP_Error(
+            'af_too_many_attempts',
+            __('<strong>Error:</strong> Too many failed login attempts. Please try again in a few minutes.', 'auburn-fields')
+        );
+    }, 30, 3);
+    
+    add_action('wp_login_failed', function ($username) {
+        $ip  = af_login_client_ip();
+        $key = af_login_count_key($ip);
+        $n   = (int) get_transient($key) + 1;
+        set_transient($key, $n, AF_LOGIN_WINDOW);
+        if ($n >= AF_LOGIN_MAX_ATTEMPTS) {
+            set_transient(af_login_lock_key($ip), 1, AF_LOGIN_LOCKOUT);
+        }
+    });
+    
+    add_action('wp_login', function ($user_login) {
+        // Successful login from this IP clears its failure count (does not touch other IPs' locks).
+        delete_transient(af_login_count_key(af_login_client_ip()));
+    }, 10, 1);

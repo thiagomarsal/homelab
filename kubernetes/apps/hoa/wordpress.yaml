@@ -72,6 +72,10 @@ spec:
               mountPath: /var/www/html/wp-content/mu-plugins/auburn-fields-irrigation-admin.php
               subPath: auburn-fields-irrigation-admin.php
               readOnly: true
+            - name: login-rate-limit-plugin
+              mountPath: /var/www/html/wp-content/mu-plugins/auburn-fields-login-rate-limit.php
+              subPath: auburn-fields-login-rate-limit.php
+              readOnly: true
             - name: php-uploads-ini
               mountPath: /usr/local/etc/php/conf.d/uploads.ini
               subPath: uploads.ini
@@ -98,6 +102,9 @@ spec:
         - name: irrigation-plugin
           configMap:
             name: af-irrigation-admin-plugin
+        - name: login-rate-limit-plugin
+          configMap:
+            name: af-login-rate-limit-plugin
         - name: php-uploads-ini
           configMap:
             name: wordpress-php-uploads
