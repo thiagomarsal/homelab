@@ -70,3 +70,4 @@ spec:
     referrerPolicy: strict-origin-when-cross-origin
     customResponseHeaders:
       X-Frame-Options: SAMEORIGIN
+      X-Powered-By: ""  # empty value = Traefik strips the header; PHP sets this (expose_php)
