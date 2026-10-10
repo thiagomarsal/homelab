@@ -13,6 +13,7 @@ spec:
       kind: Rule
       priority: 100
       middlewares:
+        - name: hoa-origin-protection
         - name: hoa-block-xmlrpc
       services:
         - name: wordpress
@@ -20,6 +21,7 @@ spec:
     - match: Host(`auburn-fields.com`) || Host(`www.auburn-fields.com`)
       kind: Rule
       middlewares:
+        - name: hoa-origin-protection
         - name: hoa-security-headers
       services:
         - name: wordpress
