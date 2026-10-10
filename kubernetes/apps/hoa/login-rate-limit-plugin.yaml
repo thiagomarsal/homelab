@@ -8,29 +8,55 @@ data:
     <?php
     /**
      * Auburn Fields HOA — login rate-limiter (no 3rd-party plugin; see item #8 of the 2026-10-09
-     * security review). Keyed on the real visitor IP via CF-Connecting-IP, which is now trustworthy
-     * because hoa-origin-protection (Traefik Middleware) blocks any request that didn't come through
-     * Cloudflare or the LAN -- so this header can no longer be spoofed by a direct-origin request.
+     * security review).
+     *
+     * Two independent layers:
+     *  - Per-IP lockout, keyed on CF-Connecting-IP. Trustworthy for internet traffic because
+     *    hoa-origin-protection (Traefik Middleware) already rejects any request that didn't come
+     *    through Cloudflare or the LAN, and Cloudflare itself overwrites CF-Connecting-IP with the
+     *    true visitor IP for anything that actually transits its network -- so the only way to
+     *    forge this header is to already be on the LAN or inside the cluster (hoa-origin-protection
+     *    also allow-lists those, for split-horizon DNS). That residual gap (a LAN device or a
+     *    compromised pod forging the header to dodge per-IP lockout) is accepted for now: I tried
+     *    to close it with a Traefik ClientIP()-based route split that would mark verified-vs-not in
+     *    a separate header, but it did not work as intended in this environment (kept reporting
+     *    unverified even for genuine Cloudflare traffic) and I did not want to keep debugging
+     *    Traefik internals live against production. Reverted that piece on 2026-10-10 -- see git
+     *    history on this file for what was tried. REMOTE_ADDR itself is useless regardless (always
+     *    Traefik's own pod IP, confirmed 2026-10-10, same for every request regardless of source).
+     *  - Per-username lockout, independent of any IP signal, so an attacker who rotates fake IPs
+     *    (or is on the LAN) still can't grind a specific account forever. Threshold is deliberately
+     *    higher since this one is a known DoS vector against a real account -- an attacker who only
+     *    wants to lock someone out can submit bad guesses for a known username from anywhere, which
+     *    is an accepted trade-off for the brute-force protection it buys.
      */
-    
-    define('AF_LOGIN_MAX_ATTEMPTS', 5);
-    define('AF_LOGIN_WINDOW',       15 * MINUTE_IN_SECONDS);
-    define('AF_LOGIN_LOCKOUT',      15 * MINUTE_IN_SECONDS);
-    
+
+    define('AF_LOGIN_IP_MAX_ATTEMPTS',   5);
+    define('AF_LOGIN_IP_WINDOW',         15 * MINUTE_IN_SECONDS);
+    define('AF_LOGIN_IP_LOCKOUT',        15 * MINUTE_IN_SECONDS);
+
+    define('AF_LOGIN_USER_MAX_ATTEMPTS', 10);
+    define('AF_LOGIN_USER_WINDOW',       15 * MINUTE_IN_SECONDS);
+    define('AF_LOGIN_USER_LOCKOUT',      30 * MINUTE_IN_SECONDS);
+
     function af_login_client_ip() {
-        // Only trust CF-Connecting-IP: real visitor IP, reliable because hoa-origin-protection
-        // already rejects anything not from Cloudflare or the LAN. REMOTE_ADDR itself is always
-        // Traefik's in-cluster pod IP (confirmed 2026-10-10), so it is not usable here.
-        $ip = $_SERVER['HTTP_CF_CONNECTING_IP'] ?? $_SERVER['REMOTE_ADDR'] ?? '';
-        return preg_match('/^[0-9a-fA-F:.]{1,45}$/', $ip) ? $ip : '0.0.0.0';
+        $ip = $_SERVER['HTTP_CF_CONNECTING_IP'] ?? '';
+        return preg_match('/^[0-9a-fA-F:.]{1,45}$/', $ip) ? $ip : null;
     }
-    
-    function af_login_lock_key($ip)    { return 'af_ll_lock_'  . md5($ip); }
-    function af_login_count_key($ip)   { return 'af_ll_count_' . md5($ip); }
-    
+
+    function af_login_ip_lock_key($ip)    { return 'af_ll_ip_lock_'  . md5($ip); }
+    function af_login_ip_count_key($ip)   { return 'af_ll_ip_cnt_'   . md5($ip); }
+    function af_login_user_lock_key($u)   { return 'af_ll_user_lock_'. md5(strtolower(trim($u))); }
+    function af_login_user_count_key($u)  { return 'af_ll_user_cnt_' . md5(strtolower(trim($u))); }
+
     add_filter('authenticate', function ($user, $username, $password) {
         if (empty($username) && empty($password)) return $user; // initial GET render, not a submit
-        if (!get_transient(af_login_lock_key(af_login_client_ip()))) return $user;
+
+        $ip = af_login_client_ip();
+        $ip_locked   = $ip !== null && get_transient(af_login_ip_lock_key($ip));
+        $user_locked = get_transient(af_login_user_lock_key($username));
+        if (!$ip_locked && !$user_locked) return $user;
+
         // Overrides whatever core resolved (even a correct password) -- must run AFTER core's own
         // authenticate callbacks (wp_authenticate_username_password / _email_password, priority 20),
         // otherwise core ignores our WP_Error and keeps checking credentials itself, silently
@@ -40,18 +66,30 @@ data:
             __('<strong>Error:</strong> Too many failed login attempts. Please try again in a few minutes.', 'auburn-fields')
         );
     }, 30, 3);
-    
+
     add_action('wp_login_failed', function ($username) {
-        $ip  = af_login_client_ip();
-        $key = af_login_count_key($ip);
-        $n   = (int) get_transient($key) + 1;
-        set_transient($key, $n, AF_LOGIN_WINDOW);
-        if ($n >= AF_LOGIN_MAX_ATTEMPTS) {
-            set_transient(af_login_lock_key($ip), 1, AF_LOGIN_LOCKOUT);
+        $ip = af_login_client_ip();
+        if ($ip !== null) {
+            $key = af_login_ip_count_key($ip);
+            $n   = (int) get_transient($key) + 1;
+            set_transient($key, $n, AF_LOGIN_IP_WINDOW);
+            if ($n >= AF_LOGIN_IP_MAX_ATTEMPTS) {
+                set_transient(af_login_ip_lock_key($ip), 1, AF_LOGIN_IP_LOCKOUT);
+            }
+        }
+
+        if ($username !== '') {
+            $key = af_login_user_count_key($username);
+            $n   = (int) get_transient($key) + 1;
+            set_transient($key, $n, AF_LOGIN_USER_WINDOW);
+            if ($n >= AF_LOGIN_USER_MAX_ATTEMPTS) {
+                set_transient(af_login_user_lock_key($username), 1, AF_LOGIN_USER_LOCKOUT);
+            }
         }
     });
-    
+
     add_action('wp_login', function ($user_login) {
-        // Successful login from this IP clears its failure count (does not touch other IPs' locks).
-        delete_transient(af_login_count_key(af_login_client_ip()));
+        $ip = af_login_client_ip();
+        if ($ip !== null) delete_transient(af_login_ip_count_key($ip));
+        delete_transient(af_login_user_count_key($user_login));
     }, 10, 1);
