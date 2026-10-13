@@ -48,22 +48,22 @@ from k3s-master-1 to k3s-master-2.
 | pve07 | .16 | HP ProDesk 600 G4 DM (TAA, SN MXL9221RWG) | HP 83EF | i5-8500T, 6C/6T (no HT), 2.1GHz base / 3.5GHz max | 32GB 2×16GB DDR4-3200 (**32GB ceiling**), mixed brand (one unidentified JEDEC vendor) | 238GB Micron SATA SSD | `nic0` I219-LM **e1000e** | k3s-worker-4 (117), template 9007 |
 | pve08 | .17 | HP ProDesk 600 G4 DM (TAA, SN MXL92857QD) | HP 83EF | i5-8500T, 6C/6T (no HT), 2.1GHz base / 3.5GHz max | 32GB 2×16GB DDR4-3200, both Micron (**32GB ceiling**) | 238GB Micron SATA SSD | `nic0` I219-LM **e1000e** | k3s-worker-5 (118), template 9008 |
 
-#### Memory detail (per-DIMM, `dmidecode -t memory`, 2026-09-20)
+#### Memory detail (per-channel, `dmidecode -t memory`, 2026-09-20, re-verified live 2026-10-13 — no change)
 
-| Host | Slot | Size | Rated speed | Brand | Part number | Configured speed |
-|---|---|---|---|---|---|---|
-| pve02 | ChannelA-DIMM0 | 16GB | DDR4-3200 | Samsung | M471A2K43DB1-CWE | 2933 MT/s |
-| pve02 | ChannelB-DIMM0 | 16GB | DDR4-3200 | Samsung | M471A2K43DB1-CWE | 2933 MT/s |
-| pve03 | ChannelA-DIMM0 | 16GB | DDR4-2133 | Micron | 8ATF2G64HZ-3G2B2 | 2133 MT/s |
-| pve03 | ChannelB-DIMM0 | 16GB | DDR4-2133 | SK hynix | HMAA2GS6CJR8N-XN | 2133 MT/s |
-| pve05 | DIMM1 (ChannelB) | 16GB | DDR4-2667 | Hynix/Hyundai | HMA82GS6JJR8N-VK | 2667 MT/s |
-| pve05 | DIMM3 (ChannelA) | 16GB | DDR4-2667 | Samsung | M471A2K43DB1-CTD | 2667 MT/s |
-| pve06 | DIMM1 (ChannelB) | 16GB | DDR4-3200 | Samsung | M471A2G43BB2-CWE | 2667 MT/s |
-| pve06 | DIMM3 (ChannelA) | 8GB | DDR4-2667 | Hynix/Hyundai | HMA81GS6JJR8N-VK | 2667 MT/s |
-| pve07 | DIMM1 (ChannelB) | 16GB | DDR4-3200 | **Unknown vendor** (JEDEC ID 0x450B) | WPBH32D416SWA-16G | 2667 MT/s |
-| pve07 | DIMM3 (ChannelA) | 16GB | DDR4-3200 | SK hynix | HMAA2GS6CJR8N-XN | 2667 MT/s |
-| pve08 | DIMM1 (ChannelB) | 16GB | DDR4-3200 | Micron | 8ATF2G64HZ-3G2E2 | 2667 MT/s |
-| pve08 | DIMM3 (ChannelA) | 16GB | DDR4-3200 | Micron | 16ATF2G64HZ-3G2J1 | 2667 MT/s |
+One row per host, both populated slots side by side (every host is 2 slots / 2 devices, 0 empty):
+
+| Host | Total | Channel A — Size/Speed/Brand/Part | Channel B — Size/Speed/Brand/Part | Configured speed (both) |
+|---|---|---|---|---|
+| pve02 | 32GB | 16GB DDR4-3200 Samsung M471A2K43DB1-CWE | 16GB DDR4-3200 Samsung M471A2K43DB1-CWE | 2933 MT/s |
+| pve03 | 32GB | 16GB DDR4-2133 Micron 8ATF2G64HZ-3G2B2 | 16GB DDR4-2133 SK hynix HMAA2GS6CJR8N-XN | 2133 MT/s |
+| pve05 | 32GB | 16GB DDR4-2667 Samsung M471A2K43DB1-CTD | 16GB DDR4-2667 Hynix/Hyundai HMA82GS6JJR8N-VK | 2667 MT/s |
+| pve06 | **24GB (asymmetric)** | **8GB** DDR4-2667 Hynix/Hyundai HMA81GS6JJR8N-VK | **16GB** DDR4-3200 Samsung M471A2G43BB2-CWE | 2667 MT/s |
+| pve07 | 32GB | 16GB DDR4-3200 SK hynix HMAA2GS6CJR8N-XN | 16GB DDR4-3200 **Unknown vendor** (JEDEC 0x450B) WPBH32D416SWA-16G | 2667 MT/s |
+| pve08 | 32GB | 16GB DDR4-3200 Micron 8ATF2G64HZ-3G2E2 | 16GB DDR4-3200 Micron 16ATF2G64HZ-3G2J1 | 2667 MT/s |
+
+pve06 is the only asymmetric pair (8GB+16GB, mixed brand) — reaching its 32GB
+ceiling means swapping the 8GB stick for a matching 16GB, not filling an
+empty slot (none exists). Every other host already runs 2×16GB.
 
 2933 MT/s on pve02 is the i7-10700T's official supported ceiling for non-K desktop
 Comet Lake, not a downclock — that pair is running at spec. The 2667 MT/s on
