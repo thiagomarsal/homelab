@@ -5,7 +5,8 @@
 _Verified live against the cluster and `helm list -A` on 2026-08-18; node table and
 fleet size updated 2026-09-18 after decommissioning pve01 and pve04; full
 per-host hardware inventory (CPU/RAM/storage detail) and fleet health refreshed
-2026-09-20._
+2026-09-20; re-verified live via SSH + kubectl 2026-10-13 — no hardware/guest
+changes, only a PVE patch version bump (see below)._
 
 | Node | IP | Role | Host |
 |------|----|------|------|
@@ -40,8 +41,8 @@ from k3s-master-1 to k3s-master-2.
 
 | Host | IP | Chassis | Baseboard | CPU | RAM (installed/max) | Storage (summary) | NIC(s) | Guests |
 |---|---|---|---|---|---|---|---|---|
-| pve02 | .11 | **Lenovo ThinkCentre M80q** (11DQS0P500, SN MJ0E003Z) | Lenovo 316C | **i7-10700T, 8C/16T**, 2.0GHz base / 4.5GHz max | 32GB 2×16GB DDR4-3200 (**64GB max, 2 slots**) | 954GB Samsung NVMe SSD (`local-lvm` 855GB) | `nic0` I219-LM **e1000e** | k3s-master-2 (111), template 9002 |
-| pve03 | .12 | **Lenovo ThinkCentre M900 Tiny** (10FM001GUS, SN MJ03Z0M7) | Lenovo 30D0 | **i7-6700T, 4C/8T**, 2.8GHz base / 4.2GHz max | 32GB 2×16GB DDR4-2133 (**32GB ceiling**), mixed brand, 1Rx8 | 238GB SK hynix NVMe SSD (boot, `local-lvm`) + 1TB Samsung 870 EVO SATA SSD (`ssd-storage`) + 466GB Seagate ST500LT012 USB HDD (`usb-backup`) | `eno1` I219-LM **e1000e** → vmbr0; `enp2s0` RTL8125 2.5GbE r8169 → vmbr1 | pfSense (106), k3s-master-3 (112), **pihole (CT101)**, **uptime-kuma (CT102)**, immich (CT100, stopped) |
+| pve02 | .11 | **Lenovo ThinkCentre M80q** (11DQS0P500, SN MJ0E003Z) | Lenovo 316C | **i7-10700T, 8C/16T**, 2.0GHz base / 4.5GHz max | 32GB 2×16GB DDR4-3200 (**64GB max, 2 slots**) | 954GB Samsung NVMe SSD (`local-lvm` 855GB) | `nic0` I219-LM **e1000e** | k3s-master-2 (111), **pihole (CT101)**, **uptime-kuma (CT102)**, template 9002 |
+| pve03 | .12 | **Lenovo ThinkCentre M900 Tiny** (10FM001GUS, SN MJ03Z0M7) | Lenovo 30D0 | **i7-6700T, 4C/8T**, 2.8GHz base / 4.2GHz max | 32GB 2×16GB DDR4-2133 (**32GB ceiling**), mixed brand, 1Rx8 | 238GB SK hynix NVMe SSD (boot, `local-lvm`) + 1TB Samsung 870 EVO SATA SSD (`ssd-storage`) + 466GB Seagate ST500LT012 USB HDD (`usb-backup`) | `eno1` I219-LM **e1000e** → vmbr0; `enp2s0` RTL8125 2.5GbE r8169 → vmbr1 | pfSense (106), k3s-master-3 (112), immich (CT100, stopped) |
 | pve05 | .14 | HP ProDesk 600 G4 DM (TAA, SN MXL9231VXM) | HP 83EF | i5-8500T, 6C/6T (no HT), 2.1GHz base / 3.5GHz max | 32GB 2×16GB DDR4-2667 (**32GB ceiling**), mixed brand, 2Rx8 | 954GB Samsung NVMe SSD (`local-lvm`) + **1TB Seagate ST1000LM024 SATA HDD, unpooled/idle** | `eno1` I219-LM **e1000e** | k3s-worker-2 (114) |
 | pve06 | .15 | HP ProDesk 600 G4 DM (TAA, SN MXL92854JV) | HP 83EF | i5-8500T, 6C/6T (no HT), 2.1GHz base / 3.5GHz max | 24GB (16+8, asymmetric, mixed brand) (**32GB ceiling, 1 slot free-ish**) | 238GB Micron SATA SSD | `nic0` I219-LM **e1000e** | k3s-worker-3 (116) — **promoted to k3s server 2026-09-18**, now also carries an etcd member |
 | pve07 | .16 | HP ProDesk 600 G4 DM (TAA, SN MXL9221RWG) | HP 83EF | i5-8500T, 6C/6T (no HT), 2.1GHz base / 3.5GHz max | 32GB 2×16GB DDR4-3200 (**32GB ceiling**), mixed brand (one unidentified JEDEC vendor) | 238GB Micron SATA SSD | `nic0` I219-LM **e1000e** | k3s-worker-4 (117), template 9007 |
@@ -110,23 +111,22 @@ All four ProDesks report the TAA product string, so pve05–pve08 are one
 identical quad of chassis; only their RAM configs differ. The i5-8500T caps at
 2666 MT/s, so the 3200-rated sticks in pve06/07/08 all run at 2667.
 
-#### Guest allocation and storage fill (live 2026-08-28; pve01/pve04 rows removed 2026-09-18, not re-swept for the rest)
+#### Guest allocation and storage fill (live 2026-09-21)
 
 | Host | Host RAM | Allocated to guests | `local-lvm` fill | Other pools |
 |---|---|---|---|---|
-| pve02 | 31.8GB | 10GB (VM111) | 1.5% of 816GB | — |
-| pve03 | 15.9GB | **13.3GB** (106+112+CT101+CT102) | 3.8% of 141GB | `ssd-storage` 55% of 913GB, `usb-backup` 9% of 457GB |
-| pve05 | 15.8GB | 12GB (VM114) | 11% of 816GB | 1TB HDD unpooled |
-| pve06 | 23.8GB | 12GB (VM116) + etcd/control-plane since 2026-09-18 | 41% of 141GB | — |
-| pve07 | 31.9GB | 12GB (VM117) | 29% of 141GB | — |
-| pve08 | 31.9GB | 12GB (VM118) | 55% of 141GB | — |
+| pve02 | 31.8GB | **11.3GB** (VM111 10GB + CT101 512MB + CT102 512MB) | 4.7% of 816GB | — |
+| pve03 | 31.8GB | 12.3GB (106+112) | 4.9% of 141GB | `ssd-storage` 51% of 913GB, `usb-backup` 9% of 457GB |
+| pve05 | 31.8GB | 12GB (VM114) | 6% of 816GB | 1TB HDD unpooled |
+| pve06 | 23.8GB | 12GB (VM116) + etcd/control-plane since 2026-09-18 | 37% of 141GB | — |
+| pve07 | 31.8GB | 12GB (VM117) | 24% of 141GB | — |
+| pve08 | 31.8GB | 12GB (VM118) | 32% of 141GB | — |
 
-**Host RAM for pve03/pve05 above (15.9GB/15.8GB) predates the 2026-09-11 RAM
-upgrade and hasn't been re-swept live** — both are now 32GB installed, expect
-~31.8-31.9GB reported like the other 32GB boards. pve06's allocation also
-predates its 2026-09-18 promotion to k3s server, which added etcd load without
-changing its VM's memory reservation. Re-verify with `free -h` and
-`kubectl top nodes` before trusting these figures.
+**pihole (CT101) and uptime-kuma (CT102) moved pve03 → pve02 on 2026-09-21**
+(`pct migrate --restart`, ~1min downtime each) to break the pve03
+single-host concentration risk — see the note below. pve03 dropped from the
+second-tightest host in the fleet to comfortable headroom (12.3GB of 31.8GB).
+Figures above are live SSH `free -h`/`pvesm status`, not the 2026-08-28 sweep.
 
 Every guest runs `balloon: 0`, so host-level `free` overstates pressure — judge
 by allocation-vs-host-RAM and by `kubectl top nodes`, not by `free` on the
@@ -146,7 +146,10 @@ provision time.
 
 **PVE version drift resolved:** all 6 hosts now report `pve-manager/9.2.11` as
 of 2026-09-20 (was pve02-only in the 2026-08-28 pass, other hosts on 9.2.10).
-Fleet is uniform again.
+Fleet is uniform again. **Patched to `9.2.21` fleet-wide by 2026-10-13**
+(kernel `7.0.14-20-pve` on all 6 hosts) — still uniform, no action needed.
+k3s node kernels also ticked 6.1.0-52 → 6.1.0-53 across all 6 (k3s itself
+unchanged at v1.34.5+k3s1).
 
 #### 2026-09-20 fleet health & cleanup pass
 
@@ -369,22 +372,29 @@ cluster to two etcd members for about 25 minutes. Sequence that worked:
 node's `/root/.ssh/id_rsa.pub` into the cluster's shared
 `/etc/pve/priv/authorized_keys` and use `pvecm add <ip> --use_ssh`.
 
-**pihole (CT101) and uptime-kuma (CT102) now live on pve03**, moved there to
-free pve02.
+**pihole (CT101) and uptime-kuma (CT102) lived on pve03 from 2026-08-25 until
+2026-09-21**, when they were moved back to pve02.
 
-> **Known concentration risk, accepted deliberately.** pve03 carries the router
-> (pfSense), LAN DNS (pihole), an etcd master, and the monitor that would report
-> the outage (uptime-kuma). A single pve03 failure takes routing, DNS and
-> alerting at once — and pve03 is on `e1000e` hardware, whose failure mode is a
-> host that stays up with a dead NIC. Pi-hole was previously on pve02 precisely
-> to keep DNS off Intel NICs, and **the replacement pve02 is also I219-LM**, so
-> that option did not come back. The remaining fix is to move pihole to
-> **pve04**, now the only Realtek-NIC host left in the fleet.
+> **Concentration risk — mitigated 2026-09-21, not eliminated.** pve03 used to
+> carry the router (pfSense), LAN DNS (pihole), an etcd master, and the monitor
+> that would report the outage (uptime-kuma) all on one host — a single pve03
+> failure took routing, DNS and alerting out simultaneously. pve04 (the
+> Realtek-NIC host this note used to point at as "the fix") was decommissioned
+> 2026-09-18, so a NIC-diverse landing spot no longer exists anywhere in the
+> fleet. Instead, pihole and uptime-kuma were moved to **pve02** — still
+> `e1000e`, so this does **not** solve the underlying NIC-diversity gap, but it
+> does split the failure domain: a pve03 NIC hang now only takes out
+> pfSense + the master-3 etcd member, while DNS and the outage monitor survive
+> on a separate physical host. pve02 also had by far the most idle capacity in
+> the fleet (8 of 16 threads used, 17GB+ free), so this uses slack that was
+> otherwise doing nothing. Revisit real NIC diversity only if a Realtek-NIC
+> host re-enters the fleet.
 
-pve03 is now the second-tightest host in the fleet on RAM: 2048 (pfSense) +
-10240 (master-3) + 512 + 512 (the two CTs) = **13.3GB allocated of 15.9GB**,
-leaving ~2.6GB for PVE itself against ~1.7GB typical usage. Do not add guests
-here without reducing something first.
+pve03 dropped from the second-tightest host in the fleet to comfortable
+headroom: 2048 (pfSense) + 10240 (master-3) = **12.3GB allocated of 31.8GB**
+(RAM upgrade to 32GB already landed 2026-09-11, so this is a real ceiling, not
+a stale figure). pve02 picked up the two CTs' 1GB combined, negligible against
+its 32GB.
 
 ### Core component versions (helm/live, 2026-08-18)
 
