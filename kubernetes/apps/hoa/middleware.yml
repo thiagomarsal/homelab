@@ -1,16 +1,7 @@
 ---
-# Deny-all for xmlrpc.php: allow-list contains only a TEST-NET-1 address that no client can have.
-# Nothing legitimate uses xmlrpc (no Jetpack/mobile app); logs showed ~2.2k scanner POSTs / 72h.
-apiVersion: traefik.io/v1alpha1
-kind: Middleware
-metadata:
-  name: hoa-block-xmlrpc
-  namespace: hoa
-spec:
-  ipAllowList:
-    sourceRange:
-      - 192.0.2.1/32
----
+# NOTE: xmlrpc.php blocking moved to the cluster-wide block-probes route
+# (kubernetes/system/traefik/middlewares.yml). Only hoa-specific middlewares remain here.
+#
 # Origin-bypass protection: pfSense forwards WAN:80/443 -> 192.168.1.61 (Traefik) from `*`
 # source, with no restriction (confirmed 2026-10-10). That means the home WAN IP, if
 # discovered, reaches Traefik directly, skipping Cloudflare entirely -- which also skips

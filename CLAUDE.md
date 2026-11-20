@@ -21,7 +21,7 @@ Global work standards from `~/.claude/CLAUDE.md` do not apply here.
 - **PVE hosts**: pve01–pve06 at 192.168.1.10–15 (bare-metal Proxmox hypervisors), all always-on
 - **Ingress IP**: 192.168.1.61 (Traefik LoadBalancer, all `*.tmf-solutions.com` routes here)
 - **Namespace layout**: `monitoring`, `networking`, `storage`, and per-app namespaces
-- **IaC**: Ansible for bare-metal nodes (`ansible/`), raw manifests + HelmChartConfig for cluster (`kubernetes/`)
+- **IaC**: Ansible for bare-metal nodes (`ansible/`), raw manifests + Helm values for cluster (`kubernetes/`; Traefik edge config in `kubernetes/system/traefik/`)
 
 ---
 

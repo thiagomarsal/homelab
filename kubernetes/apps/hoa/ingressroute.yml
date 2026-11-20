@@ -9,15 +9,8 @@ spec:
   entryPoints:
     - websecure
   routes:
-    - match: (Host(`auburn-fields.com`) || Host(`www.auburn-fields.com`)) && Path(`/xmlrpc.php`)
-      kind: Rule
-      priority: 100
-      middlewares:
-        - name: hoa-origin-protection
-        - name: hoa-block-xmlrpc
-      services:
-        - name: wordpress
-          port: 80
+    # /xmlrpc.php and other scanner paths are blocked cluster-wide by the global
+    # block-probes route (kubernetes/system/traefik/middlewares.yml) — no per-site rule here.
     - match: Host(`auburn-fields.com`) || Host(`www.auburn-fields.com`)
       kind: Rule
       middlewares:
@@ -41,6 +34,9 @@ spec:
   routes:
     - match: Host(`hoa.tmf-solutions.com`)
       kind: Rule
+      middlewares:
+        - name: lan-only          # staging site: never public
+          namespace: traefik
       services:
         - name: wordpress
           port: 80

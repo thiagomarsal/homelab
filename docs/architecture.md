@@ -400,7 +400,7 @@ its 32GB.
 
 | Component | Version | Notes |
 |---|---|---|
-| Traefik | v3.6.11 (chart 39.0.6) | k3s-bundled, HelmChartConfig-customized |
+| Traefik | v3.6.11 (chart 39.0.6) | standalone Helm release in `traefik` ns (NOT k3s-bundled); values + shared middlewares in `kubernetes/system/traefik/` — see `docs/runbooks/edge-protection.md` |
 | cert-manager | v1.16.3 | matches `group_vars/all.yml` pin |
 | MetalLB | v0.14.9 | matches pin |
 | Longhorn | v1.11.1 (chart 108.3.0) | **pin in `group_vars/all.yml` says v1.7.2 — stale, deployed release is newer** |

@@ -12,6 +12,9 @@ spec:
   routes:
     - match: Host(`loki.tmf-solutions.com`)
       kind: Rule
+      middlewares:
+        - name: lan-only          # shared allow-list; PVE promtail agents are 192.168.1.10-15
+          namespace: traefik
       services:
         - name: loki-gateway
           port: 80

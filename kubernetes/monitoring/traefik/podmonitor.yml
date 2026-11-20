@@ -4,9 +4,9 @@
 # Why a PodMonitor instead of a ServiceMonitor or a static scrape job:
 #
 # Traefik already serves Prometheus metrics on container port `metrics` (9100)
-# — the HelmChartConfig at kubernetes/system/traefik/helmchartconfig.yml sets
-# `metrics.prometheus.entryPoint: metrics` plus
-# `--entrypoints.metrics.address=:9100`, and curling localhost:9100/metrics
+# — the Traefik Helm chart (release `traefik`, values in
+# kubernetes/system/traefik/values.yml) enables `--metrics.prometheus` on the
+# `metrics` entrypoint at :9100, and curling localhost:9100/metrics
 # inside the pod returns real data. What was missing is that the Traefik
 # chart builds its Service from the `ports:` map, and `metrics` is not in it,
 # so svc/traefik exposes only web=80 and websecure=443.

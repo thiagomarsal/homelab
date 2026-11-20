@@ -80,19 +80,24 @@
   command: helm repo update
   changed_when: false
 
+# Values live in kubernetes/system/traefik/values.yml (single source of truth: HTTPS redirect,
+# access logs, global headers entrypoint middleware, cross-namespace middleware refs).
+- name: Copy Traefik Helm values
+  copy:
+    src: "{{ playbook_dir }}/../../../kubernetes/system/traefik/values.yml"
+    dest: /tmp/homelab-traefik-values.yml
+    mode: '0644'
+
+# Chart pinned to the deployed version so a rebuild matches the running cluster.
+# On a fresh cluster the entrypoint references the traefik-global-headers middleware before
+# it exists; it is applied right after (see "Apply Traefik edge middlewares").
 - name: Install Traefik
   command: >-
     helm upgrade --install traefik traefik/traefik
     --namespace traefik
     --create-namespace
-    --set service.type=LoadBalancer
-    --set providers.kubernetesCRD.enabled=true
-    --set providers.kubernetesIngress.enabled=true
-    --set ingressRoute.dashboard.enabled=false
-    --set resources.requests.cpu=50m
-    --set resources.requests.memory=128Mi
-    --set resources.limits.cpu=1
-    --set resources.limits.memory=1Gi
+    --version 39.0.6
+    --values /tmp/homelab-traefik-values.yml
     --wait --timeout 5m
   environment:
     KUBECONFIG: /etc/rancher/k3s/k3s.yaml
@@ -119,8 +124,8 @@
     KUBECONFIG: /etc/rancher/k3s/k3s.yaml
   changed_when: false
 
-- name: Apply Traefik HelmChartConfig (HTTP→HTTPS redirect + metrics)
-  command: k3s kubectl apply -f /tmp/homelab-k8s/system/traefik/helmchartconfig.yml
+- name: Apply Traefik edge middlewares (global headers, lan-only, block-probes route)
+  command: k3s kubectl apply -f /tmp/homelab-k8s/system/traefik/middlewares.yml
   environment:
     KUBECONFIG: /etc/rancher/k3s/k3s.yaml
   changed_when: false
