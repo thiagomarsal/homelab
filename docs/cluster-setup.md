@@ -335,6 +335,11 @@ Pair this with an uncordon service that runs on startup to make the node schedul
 
 ### Customizing the bundled Traefik
 
+> **This cluster does not use the k3s-bundled Traefik.** It runs a standalone Helm release in
+> the `traefik` namespace, configured by `kubernetes/system/traefik/values.yml` and
+> `middlewares.yml` (see `docs/runbooks/edge-protection.md`). The `HelmChartConfig` below is
+> generic k3s background only and was never applied here.
+
 K3s v1.34 bundles Traefik v3 and deploys it automatically. **Never edit** the auto-generated manifest at `/var/lib/rancher/k3s/server/manifests/traefik.yaml` — k3s overwrites it. Instead, create a `HelmChartConfig`:
 
 ```yaml

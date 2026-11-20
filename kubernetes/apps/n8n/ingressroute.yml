@@ -10,6 +10,9 @@ spec:
   routes:
     - match: Host(`n8n.tmf-solutions.com`)
       kind: Rule
+      middlewares:
+        - name: lan-only          # shared allow-list, kubernetes/system/traefik/middlewares.yml
+          namespace: traefik
       services:
         - name: n8n
           port: 80

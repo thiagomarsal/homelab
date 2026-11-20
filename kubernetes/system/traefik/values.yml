@@ -1,0 +1,64 @@
+# Traefik Helm values — SINGLE source of truth for cluster-wide edge behaviour.
+# Traefik is a plain Helm release (namespace traefik), NOT the k3s built-in, so the old
+# HelmChartConfig never applied. Apply with (chart pinned to what is deployed):
+#
+#   kubectl apply -f kubernetes/system/traefik/middlewares.yml     # first: entrypoint refs it
+#   helm upgrade --install traefik traefik/traefik -n traefik \
+#     --version 39.0.6 -f kubernetes/system/traefik/values.yml --wait
+#
+# Rollback: `helm rollback traefik <previous revision> -n traefik`.
+service:
+  type: LoadBalancer
+  spec:
+    # LOAD-BEARING SECURITY SETTING. `Local` preserves the real client IP. With the default
+    # (`Cluster`) kube-proxy SNATs traffic to a node IP (192.168.1.5x), which sits INSIDE the
+    # lan-only allow-list (192.168.1.0/24), so every lan-only app would silently accept
+    # requests from the internet. This was previously set by an out-of-band `kubectl patch`
+    # and would have been lost on a rebuild. After any change, confirm ClientHost in the
+    # Traefik access log shows real addresses (Cloudflare IPs for public traffic).
+    externalTrafficPolicy: Local
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 1
+    memory: 1Gi
+
+ingressRoute:
+  dashboard:
+    enabled: false   # the dashboard route is applied separately (ansible template)
+
+providers:
+  kubernetesCRD:
+    enabled: true
+    # Lets IngressRoutes in any namespace reference the shared `lan-only` middleware that
+    # lives in the traefik namespace (see middlewares.yml) instead of one copy per app.
+    allowCrossNamespace: true
+  kubernetesIngress:
+    enabled: true
+
+ports:
+  web:
+    http:
+      redirections:
+        entryPoint:
+          # Entrypoint NAME (the chart rejects anything else). It renders to ":443", the
+          # exposed port, not the internal 8443 container port.
+          to: websecure
+          scheme: https
+          permanent: true
+  websecure:
+    http:
+      middlewares:
+        # <namespace>-<name>@kubernetescrd — applied to EVERY router on websecure.
+        - traefik-global-headers@kubernetescrd
+
+logs:
+  access:
+    enabled: true
+    format: json
+    bufferingSize: 100
+    # Request headers are dropped by default (chart default), so Authorization / cookies
+    # never reach the log. Do not switch headers.defaultmode to keep.

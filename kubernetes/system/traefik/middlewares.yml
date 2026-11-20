@@ -1,0 +1,78 @@
+# Cluster-wide edge middlewares. Everything that should apply to ALL apps lives here;
+# per-app middlewares stay with their app only when they are genuinely app-specific.
+#
+# KEEP IN SYNC with the Cloudflare WAF custom rule (docs/runbooks/edge-protection.md): the
+# block-probes path list below is the single source for both layers.
+---
+# Applied to every router on websecure via ports.websecure.http.middlewares (values.yml).
+# Deliberately minimal: referrer-policy and X-Frame-Options are NOT set here because they
+# would override values Nextcloud/Immich/Grafana set themselves; HSTS is omitted (hard to
+# roll back, would also pin LAN clients).
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: global-headers
+  namespace: traefik
+spec:
+  headers:
+    contentTypeNosniff: true
+    customResponseHeaders:
+      X-Powered-By: ""   # empty value = Traefik strips the header (PHP sets it)
+---
+# Shared LAN-only allow-list for apps that must never be reachable from the internet.
+# Reference from any namespace as:  middlewares: [{name: lan-only, namespace: traefik}]
+# (needs providers.kubernetesCRD.allowCrossNamespace=true, set in values.yml).
+# 192.168.1.0/24 = home LAN (split-horizon DNS sends LAN clients straight to Traefik);
+# 10.42.0.0/16   = k3s pod network (in-cluster callers).
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: lan-only
+  namespace: traefik
+spec:
+  ipAllowList:
+    sourceRange:
+      - 192.168.1.0/24
+      - 10.42.0.0/16
+---
+# Deny-all: the allow-list holds only a TEST-NET-1 address no client can have, so every
+# request that reaches it gets 403 before any app (PHP/WordPress) renders anything.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: block-probes
+  namespace: traefik
+spec:
+  ipAllowList:
+    sourceRange:
+      - 192.0.2.1/32
+---
+# Host-less, high-priority route: matches scanner probe paths on EVERY hostname, so new
+# apps are covered with no per-app config. Blocked paths:
+#   - dot-files/dirs anywhere in the path: .env* .git* .svn .hg .aws .azure .ssh .docker
+#     .kube .npmrc .htaccess .htpasswd .DS_Store .bash_history .claude .cursor .anthropic
+#     .openai .vscode .idea .gcloud .terraform   (NOT /.well-known — Immich and Nextcloud
+#     use it for client discovery)
+#   - /xmlrpc.php (unused; was ~2.2k scanner POSTs / 72h)
+#   - wp-config backup copies
+# Excluded on purpose: /remote.php and /public.php — Nextcloud WebDAV paths contain user
+# file names, and a synced folder with a .git or .env file must keep working.
+# Regex is Go RE2 (no lookahead), case-insensitive.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: block-probes
+  namespace: traefik
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - kind: Rule
+      priority: 100000
+      match: 'PathRegexp(`(?i)((^|/)\.(env|git|svn|hg|aws|azure|ssh|docker|kube|npmrc|htaccess|htpasswd|ds_store|bash_history|claude|cursor|anthropic|openai|vscode|idea|gcloud|terraform)|/xmlrpc\.php$|/wp-config\.(php\.)?(bak|old|orig|save|swp|txt|zip))`) && !PathPrefix(`/remote.php`) && !PathPrefix(`/public.php`)'
+      middlewares:
+        - name: block-probes
+      services:
+        - name: noop@internal
+          kind: TraefikService
+  tls: {}

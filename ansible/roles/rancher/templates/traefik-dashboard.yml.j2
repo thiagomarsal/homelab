@@ -10,6 +10,9 @@ spec:
   routes:
     - match: Host(`{{ traefik_hostname }}`)
       kind: Rule
+      middlewares:
+        - name: lan-only          # defined in kubernetes/system/traefik/middlewares.yml
+          namespace: traefik
       services:
         - name: api@internal
           kind: TraefikService
