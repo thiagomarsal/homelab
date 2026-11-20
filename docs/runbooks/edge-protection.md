@@ -103,8 +103,10 @@ Only works while every internet-facing hostname is orange-cloud (true as of 2026
 apex, www, drive, photos on both zones). A new grey-cloud record would be unreachable from the
 internet — by design.
 
-After step 4 is confirmed you can drop `hoa-origin-protection` (hoa namespace): it duplicates
-this lockout with a hand-copied Cloudflare range list that goes stale.
+Applied and verified 2026-11-20 (phone on mobile data cannot reach the WAN IP directly). The old
+per-site `hoa-origin-protection` middleware, which duplicated this with a hand-copied Cloudflare
+range list that goes stale, was removed. Re-check after any pfSense change: in the Traefik
+access log every non-LAN `ClientHost` should be a Cloudflare address.
 
 ## Verify (from the LAN)
 
