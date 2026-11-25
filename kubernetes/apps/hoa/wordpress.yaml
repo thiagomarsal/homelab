@@ -23,6 +23,24 @@ data:
     post_max_size = 8M
     max_execution_time = 60
 ---
+# Caps Apache prefork so a request flood queues instead of spawning up to the stock 150
+# workers (~40-60 MB each) inside a 1Gi limit; that was the Nov 3 OOMKill. Loaded from
+# conf-enabled, i.e. after mods-enabled/mpm_prefork.conf, so these values win.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wordpress-apache-mpm
+  namespace: hoa
+data:
+  mpm-tuning.conf: |
+    <IfModule mpm_prefork_module>
+        StartServers            4
+        MinSpareServers         3
+        MaxSpareServers         8
+        MaxRequestWorkers       20
+        MaxConnectionsPerChild  2000
+    </IfModule>
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -79,6 +97,9 @@ spec:
             - name: php-uploads-ini
               mountPath: /usr/local/etc/php/conf.d/uploads.ini
               subPath: uploads.ini
+            - name: apache-mpm
+              mountPath: /etc/apache2/conf-enabled/mpm-tuning.conf
+              subPath: mpm-tuning.conf
               readOnly: true
           resources:
             requests:
@@ -86,7 +107,7 @@ spec:
               cpu: 100m
             limits:
               memory: 1Gi
-              cpu: 500m
+              cpu: "1"  # was 500m: probe-scan bursts were CPU-throttled (~26% of periods)
           readinessProbe:
             tcpSocket:
               port: 80
@@ -108,6 +129,9 @@ spec:
         - name: php-uploads-ini
           configMap:
             name: wordpress-php-uploads
+        - name: apache-mpm
+          configMap:
+            name: wordpress-apache-mpm
 ---
 apiVersion: v1
 kind: Service

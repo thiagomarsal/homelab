@@ -1,8 +1,9 @@
 # Cluster-wide edge middlewares. Everything that should apply to ALL apps lives here;
 # per-app middlewares stay with their app only when they are genuinely app-specific.
 #
-# KEEP IN SYNC with the Cloudflare WAF custom rule (docs/runbooks/edge-protection.md): the
-# block-probes path list below is the single source for both layers.
+# Traefik is the enforcement layer for probe blocking and rate limiting (applies to every
+# hostname, LAN and Cloudflare traffic alike). The optional Cloudflare WAF rule in
+# docs/runbooks/edge-protection.md is a coarser, narrower copy and may lag this file.
 ---
 # Applied to every router on websecure via ports.websecure.http.middlewares (values.yml).
 # Deliberately minimal: referrer-policy and X-Frame-Options are NOT set here because they
@@ -18,6 +19,25 @@ spec:
     contentTypeNosniff: true
     customResponseHeaders:
       X-Powered-By: ""   # empty value = Traefik strips the header (PHP sets it)
+---
+# Flood guard applied to EVERY router on websecure (values.yml). Keyed on the TCP peer
+# address (default ipStrategy), NOT CF-Connecting-IP: requests without that header (LAN,
+# in-cluster) would all share one bucket and throttle each other (verified on a test route
+# 2026-11-25). With externalTrafficPolicy=Local each LAN client gets its own bucket and each
+# Cloudflare edge IP gets one, so limits are deliberately generous: this stops floods, it is
+# not a per-user limiter (use app-level limiters such as hoa login-rate-limit for that).
+# 100 req/s sustained, 300 burst per peer: a WordPress/Immich page load fans out to
+# dozens of assets in under a second and must not be throttled.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: global-rate-limit
+  namespace: traefik
+spec:
+  rateLimit:
+    average: 100
+    period: 1s
+    burst: 300
 ---
 # Shared LAN-only allow-list for apps that must never be reachable from the internet.
 # Reference from any namespace as:  middlewares: [{name: lan-only, namespace: traefik}]
@@ -48,16 +68,19 @@ spec:
       - 192.0.2.1/32
 ---
 # Host-less, high-priority route: matches scanner probe paths on EVERY hostname, so new
-# apps are covered with no per-app config. Blocked paths:
-#   - dot-files/dirs anywhere in the path: .env* .git* .svn .hg .aws .azure .ssh .docker
-#     .kube .npmrc .htaccess .htpasswd .DS_Store .bash_history .claude .cursor .anthropic
-#     .openai .vscode .idea .gcloud .terraform   (NOT /.well-known — Immich and Nextcloud
-#     use it for client discovery)
-#   - /xmlrpc.php (unused; was ~2.2k scanner POSTs / 72h)
-#   - wp-config backup copies
-# Excluded on purpose: /remote.php and /public.php — Nextcloud WebDAV paths contain user
-# file names, and a synced folder with a .git or .env file must keep working.
-# Regex is Go RE2 (no lookahead), case-insensitive.
+# apps are covered with no per-app config. Blocked (Go RE2, case-insensitive, no lookahead):
+#   A. any dot-file/dir segment (/.env, /api/.git/config, /.s3cfg, /.circleci/...) EXCEPT
+#      /.well-known (Immich and Nextcloud use it for client discovery)
+#   B. named secret/config/backup files, by name rather than an allow-list of dot-names:
+#      backup extensions (.sql .bak .old .save .orig .swp .tfstate .tfvars .pem .key .p12
+#      .pfx, trailing ~), credentials*, docker-compose*/compose*.yml, terraform*,
+#      appsettings*.json, *.env / env(.txt), mcp.json, /config/..., /actuator/, /_profiler/,
+#      phpinfo/info.php, wp-config.php, xmlrpc.php, CI/IaC/framework files (Jenkinsfile,
+#      Pipfile, vercel.json, web.config, id_rsa, ...), /sites/default/, /supabase/
+# Excluded on purpose (WebDAV/share paths contain user file names, so a synced folder with
+# a .git, .env or dump.sql must keep working): /remote.php, /public.php, /s/, /index.php/s/
+# Left open on purpose: /, /health*, /_status, /version, /api/health (legit probes).
+# Test any regex change offline against real paths before applying (see the runbook).
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -69,7 +92,7 @@ spec:
   routes:
     - kind: Rule
       priority: 100000
-      match: 'PathRegexp(`(?i)((^|/)\.(env|git|svn|hg|aws|azure|ssh|docker|kube|npmrc|htaccess|htpasswd|ds_store|bash_history|claude|cursor|anthropic|openai|vscode|idea|gcloud|terraform)|/xmlrpc\.php$|/wp-config\.(php\.)?(bak|old|orig|save|swp|txt|zip))`) && !PathPrefix(`/remote.php`) && !PathPrefix(`/public.php`)'
+      match: '((PathRegexp(`(^|/)\.[^/]`) && !PathPrefix(`/.well-known`)) || PathRegexp(`(?i)(/xmlrpc\.php$|/wp-config\.php|/wp-config\.(bak|old|orig|save|swp|txt|zip)|\.(sql|bak|old|save|orig|swp|tfstate|tfvars|pem|key|p12|pfx)$|~$|^/(aws-)?credentials[^/]*$|^/(docker-)?compose[^/]*\.ya?ml$|^/terraform[^/]*$|^/appsettings[^/]*\.json$|^/(app/)?config/|^/(env|[^/]*\.env)(\.txt)?$|^/mcp\.json$|^/(actuator|_profiler)/|^/(phpinfo|info)\.php$|^/(Jenkinsfile|Pipfile(\.lock)?|Procfile|Rakefile|Homestead\.ya?ml|Brewfile|buildspec\.ya?ml|[a-z]+-pipelines\.ya?ml|codeship-[a-z]+\.ya?ml|settings\.php|configuration\.php|config\.inc\.php|config\.php|id_rsa|id_dsa|id_ecdsa|id_ed25519|error\.log|access\.log|debug\.log|secrets?\.ya?ml|vault\.ya?ml|parameters\.ya?ml|inventory\.ini|web\.config|server-status|install\.php|localsettings\.php|firebase\.json|netlify\.toml|fly\.toml|vercel\.json|railway\.json|render\.ya?ml|serverless\.ya?ml|site\.yml|sonar-project\.properties|envoy\.blade\.php|wsgi\.py|global\.asa|default\.aspx)$|^/(sites/default|supabase)/)`)) && !PathPrefix(`/remote.php`) && !PathPrefix(`/public.php`) && !PathPrefix(`/s/`) && !PathPrefix(`/index.php/s/`)'
       middlewares:
         - name: block-probes
       services:

@@ -11,7 +11,8 @@ LAN      ───────────────────────�
 | Concern | Where | File / place |
 |---|---|---|
 | HTTP → HTTPS redirect | Traefik `web` entrypoint | `kubernetes/system/traefik/values.yml` |
-| Probe-path blocking (`/.env`, `/.git`, xmlrpc…) | Traefik, host-less route, all hostnames | `kubernetes/system/traefik/middlewares.yml` (`block-probes`) **and** Cloudflare WAF rule below |
+| Probe-path blocking (dot-files, secrets/backups/IaC files, xmlrpc…) | Traefik, host-less route, all hostnames | `kubernetes/system/traefik/middlewares.yml` (`block-probes`); optional narrower copy in the Cloudflare WAF rule below |
+| Flood guard (100 req/s, burst 300 per peer address) | Traefik `websecure` entrypoint middleware | `middlewares.yml` (`global-rate-limit`), referenced from `values.yml` |
 | Baseline headers (nosniff, strip X-Powered-By) | Traefik `websecure` entrypoint middleware | `middlewares.yml` (`global-headers`) |
 | LAN-only apps | shared `lan-only` middleware | `middlewares.yml`; used by grafana, loki, n8n, traefik dashboard, hoa staging, and (own copy) porquinho |
 | Direct-to-origin lockout | pfSense NAT rule | manual, below |
@@ -37,12 +38,25 @@ references from the five IngressRoutes.
 
 ## Blocked path list (single source)
 
-Edit the regex in `middlewares.yml`, then mirror it in the Cloudflare rule. Currently:
-dot-files/dirs `.env* .git* .svn .hg .aws .azure .ssh .docker .kube .npmrc .htaccess .htpasswd
-.DS_Store .bash_history .claude .cursor .anthropic .openai .vscode .idea .gcloud .terraform`,
-`/xmlrpc.php`, `wp-config.php` backup copies. **Not** `/.well-known` (Immich/Nextcloud discovery).
-Traefik excludes `/remote.php` and `/public.php` (Nextcloud WebDAV file names) — keep that
-exclusion in the Cloudflare rule for the `tmf-solutions.com` zone.
+Edit the regex in `middlewares.yml`; its comment block lists every category. Summary: any
+dot-file/dir segment except `/.well-known`; backup/secret extensions (`.sql .bak .old .save .orig
+.swp .tfstate .tfvars .pem .key .p12 .pfx`, trailing `~`); `credentials*`, `docker-compose*`,
+`terraform*`, `appsettings*.json`, `*.env`, `/config/`, `/actuator/`, `wp-config.php`,
+`xmlrpc.php`, CI/IaC/framework files. Excluded: `/remote.php`, `/public.php`, `/s/`,
+`/index.php/s/` (Nextcloud WebDAV/share file names). The Cloudflare rule below was NOT widened
+and covers only the original dot-file list; Traefik is the layer that enforces the full list.
+
+Test a regex change offline before applying: run the pattern (Python `re` is close enough to
+Go RE2 as long as you avoid lookarounds) over real paths pulled from the access log and
+over known-legit paths (`/.well-known/*`, `/remote.php/dav/...`, `/wp-json/...`, `/api/...`).
+
+## Rate limit
+
+`global-rate-limit` keys on the TCP peer address, not `CF-Connecting-IP`. Reason (tested
+2026-11-25): requests without that header (LAN, in-cluster) all land in one shared bucket.
+Consequence: all visitors behind one Cloudflare edge IP share a bucket, so the limit is generous
+(100/s, burst 300) and only stops floods. Per-user limits belong in the app (hoa login limiter).
+If a client sees HTTP 429 in bulk (Nextcloud sync, Immich import) raise `average`/`burst`.
 
 ## Cloudflare WAF custom rule (manual, free plan)
 
@@ -103,8 +117,10 @@ Only works while every internet-facing hostname is orange-cloud (true as of 2026
 apex, www, drive, photos on both zones). A new grey-cloud record would be unreachable from the
 internet — by design.
 
-After step 4 is confirmed you can drop `hoa-origin-protection` (hoa namespace): it duplicates
-this lockout with a hand-copied Cloudflare range list that goes stale.
+Applied and verified 2026-11-20 (phone on mobile data cannot reach the WAN IP directly). The old
+per-site `hoa-origin-protection` middleware, which duplicated this with a hand-copied Cloudflare
+range list that goes stale, was removed. Re-check after any pfSense change: in the Traefik
+access log every non-LAN `ClientHost` should be a Cloudflare address.
 
 ## Verify (from the LAN)
 

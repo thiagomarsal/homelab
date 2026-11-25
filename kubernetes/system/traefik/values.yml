@@ -54,6 +54,8 @@ ports:
       middlewares:
         # <namespace>-<name>@kubernetescrd — applied to EVERY router on websecure.
         - traefik-global-headers@kubernetescrd
+        # Flood guard for every router (see middlewares.yml for why it keys on peer address).
+        - traefik-global-rate-limit@kubernetescrd
 
 logs:
   access:
