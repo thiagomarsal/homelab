@@ -21,7 +21,7 @@ path if that database and its backups are ever lost.
 
 | Fact | Value |
 |---|---|
-| Proxmox host | **pve03** (was pve01 → pve07 2026-08-21 → pve03 2026-08-25) |
+| Proxmox host | **pve02** (was pve01 → pve07 2026-08-21 → pve03 2026-08-25 → pve02 2026-09-21) |
 | CTID | 102 |
 | Hostname | uptime-kuma |
 | IP | 192.168.1.21/24 |
@@ -187,9 +187,13 @@ Reload records with `systemctl restart pihole-FTL` inside CT 101.
   `PRAGMA integrity_check` *inside* the container, pulls it out with
   `pct pull`, and only then atomically renames it into place — so a failed
   or partial backup run never overwrites a previous good one.
-- **Where**: `/var/lib/vz/dump/kuma/kuma-YYYYMMDD.db` on **pve03** (the host,
+- **Where**: `/var/lib/vz/dump/kuma/kuma-YYYYMMDD.db` on **pve02** (the host,
   not the container). Because the cron lives on the host, it does **not** follow
-  a `pct migrate` — see the warning above.
+  a `pct migrate` — see the warning above. Moved here 2026-09-21 when CT102
+  moved off pve03; the pre-move backup history (through 2026-09-21) stayed
+  behind at `pve03:/var/lib/vz/dump/kuma/` and was not copied over — only the
+  last 7 days matter for restore anyway, and pve03 keeps 7 days of that file
+  system regardless.
 - **Retention**: 7 days (older dated files, and any orphaned
   `.kuma-*.db.tmp` files left by an interrupted pull, deleted by `mtime`).
   Note the retention `find` runs *after* the backup step and `fail()` exits
@@ -198,7 +202,7 @@ Reload records with `systemctl restart pihole-FTL` inside CT 101.
 - This is the *only* backup of the 13 monitor definitions. There is no
   second copy and nothing here is in git. (A one-off rescue copy of the
   2026-08-18→21 files also sits in `pve03:/root/kuma-backup-archive/`, outside
-  the retention path.)
+  the retention path — historical, left on pve03.)
 - **Checking it actually ran**: the host's cron.daily failures go nowhere by
   default. The script logs to journald under the `kuma-db-backup` tag on every
   run — a `daemon.info` line on success, a `daemon.err` line with a reason on
@@ -215,7 +219,7 @@ Reload records with `systemctl restart pihole-FTL` inside CT 101.
 
 1. Re-run the provisioning playbook to get a fresh LXC + Docker + Kuma
    container back on the host in the `kuma_host` inventory group (currently
-   pve03; safe to run even if CTID 102 already exists — every step is
+   pve02; safe to run even if CTID 102 already exists — every step is
    idempotent):
    ```
    cd ansible

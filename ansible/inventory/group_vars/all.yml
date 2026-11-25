@@ -211,8 +211,8 @@ immich_lxc_ip: "192.168.1.20"
 # Uptime Kuma — off-cluster watcher, LXC (CT102).
 # The host that owns CT102 is the `kuma_host` GROUP in inventory/hosts.yml, not
 # a var here: `hosts:` in a playbook cannot read group_vars. Kuma has moved
-# pve01 -> pve07 (2026-08-21) -> pve03 (2026-08-25); update that group, not this
-# file, when it moves again.
+# pve01 -> pve07 (2026-08-21) -> pve03 (2026-08-25) -> pve02 (2026-09-21);
+# update that group, not this file, when it moves again.
 kuma_hostname_fqdn: "uptime.tmf-solutions.com"
 
 # Redis password for video pipeline (prototype — change before production)
